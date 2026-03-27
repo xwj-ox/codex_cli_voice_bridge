@@ -1,0 +1,93 @@
+name: macOS compile check
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/macos-compile-check.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "packaging/**"
+      - "docs/**"
+      - "README.md"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/macos-compile-check.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "packaging/**"
+      - "docs/**"
+      - "README.md"
+  workflow_dispatch:
+
+concurrency:
+  group: macos-compile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "${{ matrix.label }} compile check"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: macOS arm64
+          - os: macos-15-intel
+            label: macOS Intel
+
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Show runner information
+        run: |
+          uname -a
+          sw_vers
+          rustc -V
+          cargo -V
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.os }}-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Build binaries
+        run: cargo build --verbose --bin voice_bridge --bin voice_bridge_doctor --bin doubao_asr_demo --bin configure_credentials
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Smoke test voice_bridge help
+        run: cargo run --bin voice_bridge -- --help
+
+      - name: Smoke test voice_bridge_doctor
+        run: cargo run --bin voice_bridge_doctor
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-debug-artifacts
+          path: |
+            target/debug/voice_bridge*
+            target/debug/voice_bridge_doctor*
+            target/debug/doubao_asr_demo*
+            target/debug/configure_credentials*
+          retention-days: 7
