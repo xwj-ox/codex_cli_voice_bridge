@@ -6,6 +6,7 @@ pub struct PlatformInitOptions {
     pub ptt_key: String,
     pub ptt_hold_ms: u64,
     pub ptt_short_press_passthrough: bool,
+    pub forbid_host_window_target: bool,
 }
 
 pub struct PlatformServices {
@@ -86,7 +87,10 @@ pub fn create_platform_services(options: &PlatformInitOptions) -> Result<Platfor
         options.ptt_hold_ms,
         options.ptt_short_press_passthrough,
     )?;
-    let host_hwnd = get_foreground_window_info().map(|window| window.hwnd);
+    let host_hwnd = options
+        .forbid_host_window_target
+        .then(|| get_foreground_window_info().map(|window| window.hwnd))
+        .flatten();
 
     Ok(PlatformServices {
         ptt: Box::new(WindowsPttController { inner: ptt }),
@@ -99,8 +103,8 @@ pub fn create_platform_services(options: &PlatformInitOptions) -> Result<Platfor
 #[cfg(target_os = "macos")]
 pub fn create_platform_services(_options: &PlatformInitOptions) -> Result<PlatformServices> {
     use crate::platform::macos::{
-        MacosPttController, ensure_runtime_permissions, get_frontmost_window_info,
-        is_usable_target_window, parse_ptt_key, paste_text_to_window, play_cue,
+        MacosHostContext, MacosPttController, ensure_runtime_permissions,
+        get_frontmost_window_info, is_usable_target_window, paste_text_to_window, play_cue,
     };
     use crate::platform::traits::PttActivationFuture;
     use crate::platform::types::{CueKind, WindowInfo};
@@ -115,7 +119,9 @@ pub fn create_platform_services(_options: &PlatformInitOptions) -> Result<Platfo
         }
     }
 
-    struct MacosWindowService;
+    struct MacosWindowService {
+        host_context: Option<MacosHostContext>,
+    }
 
     impl WindowService for MacosWindowService {
         fn current_target(&self) -> Option<WindowInfo> {
@@ -128,7 +134,12 @@ pub fn create_platform_services(_options: &PlatformInitOptions) -> Result<Platfo
             require_title: &str,
             forbid_host_window_target: bool,
         ) -> bool {
-            is_usable_target_window(target, require_title, forbid_host_window_target)
+            is_usable_target_window(
+                target,
+                require_title,
+                forbid_host_window_target,
+                self.host_context.as_ref(),
+            )
         }
     }
 
@@ -154,8 +165,10 @@ pub fn create_platform_services(_options: &PlatformInitOptions) -> Result<Platfo
         }
     }
 
-    let _ = parse_ptt_key(&_options.ptt_key)?;
     let _permission_status = ensure_runtime_permissions()?;
+    let host_context = _options
+        .forbid_host_window_target
+        .then(MacosHostContext::detect);
     let ptt = MacosPttController::new(
         &_options.ptt_key,
         _options.ptt_hold_ms,
@@ -164,7 +177,7 @@ pub fn create_platform_services(_options: &PlatformInitOptions) -> Result<Platfo
 
     Ok(PlatformServices {
         ptt: Box::new(MacosPttWrapper { inner: ptt }),
-        window_service: Box::new(MacosWindowService),
+        window_service: Box::new(MacosWindowService { host_context }),
         text_injector: Box::new(MacosTextInjector),
         cue_player: Box::new(MacosCuePlayer),
     })

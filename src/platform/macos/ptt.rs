@@ -8,8 +8,8 @@ use anyhow::{Result, anyhow, bail};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::platform::macos::permissions::{permission_failure_message, preflight_permissions};
-use crate::platform::types::{PttActivation, WindowInfo};
 use crate::platform::macos::window::get_frontmost_window_info;
+use crate::platform::types::{PttActivation, WindowInfo};
 
 type CGEventTapProxy = *mut core::ffi::c_void;
 type CGEventRef = *mut core::ffi::c_void;
@@ -36,6 +36,8 @@ const KCG_KEYBOARD_EVENT_KEYCODE: i32 = 9;
 const KCG_EVENT_FLAG_MASK_SHIFT: CGEventFlags = 1 << 17;
 const KCG_EVENT_FLAG_MASK_CONTROL: CGEventFlags = 1 << 18;
 const KCG_EVENT_FLAG_MASK_COMMAND: CGEventFlags = 1 << 20;
+const KCG_EVENT_SOURCE_USER_DATA: i32 = 42;
+const SYNTHETIC_PASSTHROUGH_TAG: i64 = 0x0043_5642_5050_5454;
 
 #[derive(Debug)]
 enum RawKeyEvent {
@@ -45,15 +47,56 @@ enum RawKeyEvent {
 
 #[derive(Debug, Clone, Copy)]
 enum MacosPttKey {
-    Regular { key_code: u16 },
-    Modifier { key_code: i64, flag_mask: CGEventFlags },
+    Regular {
+        key_code: u16,
+    },
+    Modifier {
+        key_code: i64,
+        flag_mask: CGEventFlags,
+    },
 }
 
 #[derive(Debug)]
 struct HookState {
     key: MacosPttKey,
     suppress: bool,
+    modifier_pressed: bool,
+    tap: EventTapHandle,
     sender: mpsc::Sender<RawKeyEvent>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EventTapHandle(usize);
+
+impl EventTapHandle {
+    fn from_ptr(value: CFMachPortRef) -> Self {
+        Self(value as usize)
+    }
+
+    fn as_ptr(self) -> CFMachPortRef {
+        self.0 as CFMachPortRef
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RunLoopHandle(usize);
+
+impl RunLoopHandle {
+    fn null() -> Self {
+        Self(0)
+    }
+
+    fn from_ptr(value: CFRunLoopRef) -> Self {
+        Self(value as usize)
+    }
+
+    fn as_ptr(self) -> CFRunLoopRef {
+        self.0 as CFRunLoopRef
+    }
+
+    fn is_null(self) -> bool {
+        self.0 == 0
+    }
 }
 
 fn global_hook_state() -> &'static Mutex<Option<HookState>> {
@@ -70,52 +113,68 @@ unsafe extern "C" fn keyboard_callback(
     if event_type == KCG_EVENT_TAP_DISABLED_BY_TIMEOUT
         || event_type == KCG_EVENT_TAP_DISABLED_BY_USER_INPUT
     {
-        unsafe {
-            CGEventTapEnable(_proxy as CFMachPortRef, 1);
+        if let Ok(guard) = global_hook_state().lock()
+            && let Some(state) = guard.as_ref()
+        {
+            unsafe {
+                CGEventTapEnable(state.tap.as_ptr(), 1);
+            }
         }
         return event;
     }
 
-    if let Ok(guard) = global_hook_state().lock() {
-        if let Some(state) = guard.as_ref() {
-            let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
-            let mut handled = false;
-            match state.key {
-                MacosPttKey::Regular { key_code: expected } => {
-                    if key_code == expected as i64 {
-                        match event_type {
-                            KCG_EVENT_KEY_DOWN => {
-                                let _ = state.sender.send(RawKeyEvent::Press);
-                                handled = true;
-                            }
-                            KCG_EVENT_KEY_UP => {
-                                let _ = state.sender.send(RawKeyEvent::Release);
-                                handled = true;
-                            }
-                            _ => {}
+    let source_user_data =
+        unsafe { CGEventGetIntegerValueField(event, KCG_EVENT_SOURCE_USER_DATA) };
+    if source_user_data == SYNTHETIC_PASSTHROUGH_TAG {
+        return event;
+    }
+
+    if let Ok(mut guard) = global_hook_state().lock()
+        && let Some(state) = guard.as_mut()
+    {
+        let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
+        let mut handled = false;
+        match state.key {
+            MacosPttKey::Regular { key_code: expected } => {
+                if key_code == expected as i64 {
+                    match event_type {
+                        KCG_EVENT_KEY_DOWN => {
+                            let _ = state.sender.send(RawKeyEvent::Press);
+                            handled = true;
                         }
+                        KCG_EVENT_KEY_UP => {
+                            let _ = state.sender.send(RawKeyEvent::Release);
+                            handled = true;
+                        }
+                        _ => {}
                     }
                 }
-                MacosPttKey::Modifier {
-                    key_code: expected,
-                    flag_mask,
-                } => {
-                    if event_type == KCG_EVENT_FLAGS_CHANGED && key_code == expected {
-                        let flags = unsafe { CGEventGetFlags(event) };
-                        let pressed = (flags & flag_mask) != 0;
-                        let _ = state.sender.send(if pressed {
+            }
+            MacosPttKey::Modifier {
+                key_code: expected,
+                flag_mask,
+            } => {
+                if event_type == KCG_EVENT_FLAGS_CHANGED && key_code == expected {
+                    let flags = unsafe { CGEventGetFlags(event) };
+                    let aggregate_flag_pressed = (flags & flag_mask) != 0;
+                    let raw_event = if aggregate_flag_pressed != state.modifier_pressed {
+                        if aggregate_flag_pressed {
                             RawKeyEvent::Press
                         } else {
                             RawKeyEvent::Release
-                        });
-                        handled = true;
-                    }
+                        }
+                    } else {
+                        RawKeyEvent::Release
+                    };
+                    state.modifier_pressed = matches!(raw_event, RawKeyEvent::Press);
+                    let _ = state.sender.send(raw_event);
+                    handled = true;
                 }
             }
+        }
 
-            if handled && state.suppress {
-                return ptr::null_mut();
-            }
+        if handled && state.suppress {
+            return ptr::null_mut();
         }
     }
 
@@ -123,19 +182,28 @@ unsafe extern "C" fn keyboard_callback(
 }
 
 pub struct MacosHookHandle {
-    run_loop: CFRunLoopRef,
+    run_loop: RunLoopHandle,
     join_handle: Option<JoinHandle<()>>,
 }
 
 impl Drop for MacosHookHandle {
     fn drop(&mut self) {
         unsafe {
-            if !self.run_loop.is_null() {
-                CFRunLoopStop(self.run_loop);
+            let run_loop = self.run_loop.as_ptr();
+            if !run_loop.is_null() {
+                CFRunLoopStop(run_loop);
+                CFRunLoopWakeUp(run_loop);
             }
         }
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
+        }
+        unsafe {
+            let run_loop = self.run_loop.as_ptr();
+            if !run_loop.is_null() {
+                CFRelease(run_loop);
+                self.run_loop = RunLoopHandle::null();
+            }
         }
     }
 }
@@ -153,14 +221,6 @@ impl MacosPttController {
         let (raw_tx, raw_rx) = mpsc::channel();
         let (run_loop_tx, run_loop_rx) = mpsc::channel();
         let join_handle = thread::spawn(move || {
-            if let Ok(mut guard) = global_hook_state().lock() {
-                *guard = Some(HookState {
-                    key,
-                    suppress: true,
-                    sender: raw_tx,
-                });
-            }
-
             unsafe {
                 let mask = (1u64 << KCG_EVENT_KEY_DOWN)
                     | (1u64 << KCG_EVENT_KEY_UP)
@@ -174,16 +234,42 @@ impl MacosPttController {
                     ptr::null_mut(),
                 );
                 if tap.is_null() {
-                    let _ = run_loop_tx.send(ptr::null_mut());
+                    let _ = run_loop_tx.send(RunLoopHandle::null());
+                    return;
+                }
+
+                let source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
+                if source.is_null() {
+                    let _ = run_loop_tx.send(RunLoopHandle::null());
+                    CFRelease(tap);
                     if let Ok(mut guard) = global_hook_state().lock() {
                         *guard = None;
                     }
                     return;
                 }
-
-                let source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
                 let run_loop = CFRunLoopGetCurrent();
-                let _ = run_loop_tx.send(run_loop);
+                let retained_run_loop = CFRetain(run_loop) as CFRunLoopRef;
+                if run_loop_tx
+                    .send(RunLoopHandle::from_ptr(retained_run_loop))
+                    .is_err()
+                {
+                    CFRelease(retained_run_loop);
+                    CFRelease(source);
+                    CFRelease(tap);
+                    if let Ok(mut guard) = global_hook_state().lock() {
+                        *guard = None;
+                    }
+                    return;
+                }
+                if let Ok(mut guard) = global_hook_state().lock() {
+                    *guard = Some(HookState {
+                        key,
+                        suppress: true,
+                        modifier_pressed: false,
+                        tap: EventTapHandle::from_ptr(tap),
+                        sender: raw_tx,
+                    });
+                }
                 CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
                 CGEventTapEnable(tap, 1);
                 CFRunLoopRun();
@@ -326,7 +412,7 @@ fn worker_loop(
     }
 }
 
-pub fn parse_ptt_key(name: &str) -> Result<MacosPttKey> {
+fn parse_ptt_key(name: &str) -> Result<MacosPttKey> {
     let normalized = name.trim().to_ascii_lowercase();
     if let Some(value) = parse_function_key(&normalized) {
         return Ok(MacosPttKey::Regular { key_code: value });
@@ -337,10 +423,12 @@ pub fn parse_ptt_key(name: &str) -> Result<MacosPttKey> {
         "capslock" | "caps-lock" | "caps_lock" => bail!(
             "capslock is not supported for hold-to-talk on macOS; it is a toggle key. Use right-control, right-shift, left-win, or f1-f12 instead"
         ),
-        "left-win" | "left_win" | "leftwin" | "lwin" | "windows" | "win" => Ok(MacosPttKey::Modifier {
-            key_code: 55,
-            flag_mask: KCG_EVENT_FLAG_MASK_COMMAND,
-        }),
+        "left-win" | "left_win" | "leftwin" | "lwin" | "windows" | "win" => {
+            Ok(MacosPttKey::Modifier {
+                key_code: 55,
+                flag_mask: KCG_EVENT_FLAG_MASK_COMMAND,
+            })
+        }
         "right-control" | "right_control" | "rightcontrol" | "rctrl" | "rcontrol" => {
             Ok(MacosPttKey::Modifier {
                 key_code: 62,
@@ -420,8 +508,16 @@ fn send_key_tap(key: MacosPttKey) -> Result<()> {
         let down = CGEventCreateKeyboardEvent(ptr::null_mut(), key_code, 1);
         let up = CGEventCreateKeyboardEvent(ptr::null_mut(), key_code, 0);
         if down.is_null() || up.is_null() {
+            if !down.is_null() {
+                CFRelease(down);
+            }
+            if !up.is_null() {
+                CFRelease(up);
+            }
             bail!("Failed to create macOS keyboard events for short-tap replay");
         }
+        CGEventSetIntegerValueField(down, KCG_EVENT_SOURCE_USER_DATA, SYNTHETIC_PASSTHROUGH_TAG);
+        CGEventSetIntegerValueField(up, KCG_EVENT_SOURCE_USER_DATA, SYNTHETIC_PASSTHROUGH_TAG);
         CGEventPost(KCG_SESSION_EVENT_TAP, down);
         CGEventPost(KCG_SESSION_EVENT_TAP, up);
         CFRelease(down);
@@ -448,6 +544,7 @@ unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: u8);
     fn CGEventGetIntegerValueField(event: CGEventRef, field: i32) -> i64;
     fn CGEventGetFlags(event: CGEventRef) -> CGEventFlags;
+    fn CGEventSetIntegerValueField(event: CGEventRef, field: i32, value: i64);
     fn CGEventCreateKeyboardEvent(
         source: *mut core::ffi::c_void,
         virtual_key: u16,
@@ -467,6 +564,8 @@ unsafe extern "C" {
     fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
     fn CFRunLoopRun();
     fn CFRunLoopStop(rl: CFRunLoopRef);
+    fn CFRunLoopWakeUp(rl: CFRunLoopRef);
+    fn CFRetain(value: *const core::ffi::c_void) -> *const core::ffi::c_void;
     fn CFRelease(value: *const core::ffi::c_void);
 
     static kCFRunLoopCommonModes: CFStringRef;

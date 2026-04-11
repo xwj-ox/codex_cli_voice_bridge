@@ -177,6 +177,7 @@ async fn main() -> Result<()> {
         ptt_key: args.ptt_key.clone(),
         ptt_hold_ms: args.ptt_hold_ms,
         ptt_short_press_passthrough: args.ptt_short_press_passthrough,
+        forbid_host_window_target: args.forbid_host_window_target,
     })?;
     let runtime = BridgeRuntimeConfig {
         mic_duration: args.mic_duration,

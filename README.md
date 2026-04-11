@@ -62,8 +62,8 @@ powershell -ExecutionPolicy Bypass -File .\packaging\build_windows_release.ps1
 macOS:
 
 ```bash
-./packaging/check_macos_ready.sh
-./packaging/build_macos_release.sh
+bash ./packaging/check_macos_ready.sh
+bash ./packaging/build_macos_release.sh
 ```
 
 ## Security note
