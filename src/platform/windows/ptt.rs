@@ -279,6 +279,9 @@ pub fn parse_ptt_key(name: &str) -> Result<u32> {
             Ok(VK_RCONTROL.0 as u32)
         }
         "right-shift" | "right_shift" | "rightshift" | "rshift" => Ok(VK_RSHIFT.0 as u32),
+        "fn" | "function" | "globe" => bail!(
+            "Unsupported Windows ptt key: {name}. Windows does not expose Fn as a standard virtual key; use capslock, space, enter, left-win, right-control, right-shift, f1-f12, or a single letter."
+        ),
         _ if normalized.len() == 1 => {
             let ch = normalized.chars().next().unwrap();
             Ok(ch.to_ascii_uppercase() as u32)
