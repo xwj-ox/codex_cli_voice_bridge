@@ -20,6 +20,12 @@ type CFRunLoopSourceRef = *mut core::ffi::c_void;
 type CFAllocatorRef = *const core::ffi::c_void;
 type CFIndex = isize;
 type CFStringRef = *const core::ffi::c_void;
+type CFMutableDictionaryRef = *mut core::ffi::c_void;
+type CFNumberRef = *const core::ffi::c_void;
+type IOHIDManagerRef = *mut core::ffi::c_void;
+type IOHIDValueRef = *mut core::ffi::c_void;
+type IOHIDElementRef = *mut core::ffi::c_void;
+type IOReturn = i32;
 type CGEventType = u32;
 type CGEventFlags = u64;
 
@@ -33,11 +39,40 @@ const KCG_HEAD_INSERT_EVENT_TAP: u32 = 0;
 const KCG_EVENT_TAP_DEFAULT: u32 = 0;
 const KCG_SESSION_EVENT_TAP: u32 = 1;
 const KCG_KEYBOARD_EVENT_KEYCODE: i32 = 9;
+const MACOS_KEY_CODE_CAPS_LOCK: i64 = 57;
 const KCG_EVENT_FLAG_MASK_SHIFT: CGEventFlags = 1 << 17;
 const KCG_EVENT_FLAG_MASK_CONTROL: CGEventFlags = 1 << 18;
 const KCG_EVENT_FLAG_MASK_COMMAND: CGEventFlags = 1 << 20;
+const KCG_EVENT_FLAG_MASK_SECONDARY_FN: CGEventFlags = 1 << 23;
 const KCG_EVENT_SOURCE_USER_DATA: i32 = 42;
 const SYNTHETIC_PASSTHROUGH_TAG: i64 = 0x0043_5642_5050_5454;
+const KIOHID_OPTIONS_TYPE_NONE: u32 = 0;
+const KIO_RETURN_SUCCESS: IOReturn = 0;
+const KCF_NUMBER_INT_TYPE: i32 = 9;
+const KCF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+const HID_PAGE_GENERIC_DESKTOP: i32 = 0x01;
+const HID_USAGE_GENERIC_DESKTOP_KEYBOARD: i32 = 0x06;
+const HID_PAGE_KEYBOARD_OR_KEYPAD: u32 = 0x07;
+const HID_USAGE_KEYBOARD_CAPS_LOCK: u32 = 0x39;
+
+#[repr(C)]
+struct CFDictionaryKeyCallBacks {
+    version: CFIndex,
+    retain: *const core::ffi::c_void,
+    release: *const core::ffi::c_void,
+    copy_description: *const core::ffi::c_void,
+    equal: *const core::ffi::c_void,
+    hash: *const core::ffi::c_void,
+}
+
+#[repr(C)]
+struct CFDictionaryValueCallBacks {
+    version: CFIndex,
+    retain: *const core::ffi::c_void,
+    release: *const core::ffi::c_void,
+    copy_description: *const core::ffi::c_void,
+    equal: *const core::ffi::c_void,
+}
 
 #[derive(Debug)]
 enum RawKeyEvent {
@@ -47,6 +82,12 @@ enum RawKeyEvent {
 
 #[derive(Debug, Clone, Copy)]
 enum MacosPttKey {
+    CapsLock {
+        key_code: i64,
+    },
+    Fn {
+        flag_mask: CGEventFlags,
+    },
     Regular {
         key_code: u16,
     },
@@ -135,6 +176,35 @@ unsafe extern "C" fn keyboard_callback(
         let key_code = unsafe { CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) };
         let mut handled = false;
         match state.key {
+            MacosPttKey::CapsLock { key_code: expected } => {
+                if key_code == expected {
+                    if matches!(
+                        event_type,
+                        KCG_EVENT_KEY_DOWN | KCG_EVENT_KEY_UP | KCG_EVENT_FLAGS_CHANGED
+                    ) {
+                        // Caps Lock is a locking modifier in Quartz. Its physical up/down
+                        // events are delivered by the HID callback; this tap only suppresses
+                        // the real key event path when possible.
+                        handled = true;
+                    }
+                }
+            }
+            MacosPttKey::Fn { flag_mask } => {
+                if event_type == KCG_EVENT_FLAGS_CHANGED {
+                    let flags = unsafe { CGEventGetFlags(event) };
+                    let aggregate_flag_pressed = (flags & flag_mask) != 0;
+                    if aggregate_flag_pressed != state.modifier_pressed {
+                        let raw_event = if aggregate_flag_pressed {
+                            RawKeyEvent::Press
+                        } else {
+                            RawKeyEvent::Release
+                        };
+                        state.modifier_pressed = aggregate_flag_pressed;
+                        let _ = state.sender.send(raw_event);
+                        handled = true;
+                    }
+                }
+            }
             MacosPttKey::Regular { key_code: expected } => {
                 if key_code == expected as i64 {
                     match event_type {
@@ -179,6 +249,43 @@ unsafe extern "C" fn keyboard_callback(
     }
 
     event
+}
+
+unsafe extern "C" fn hid_input_value_callback(
+    _context: *mut core::ffi::c_void,
+    _result: IOReturn,
+    _sender: *mut core::ffi::c_void,
+    value: IOHIDValueRef,
+) {
+    if value.is_null() {
+        return;
+    }
+
+    let element = unsafe { IOHIDValueGetElement(value) };
+    if element.is_null() {
+        return;
+    }
+
+    let usage_page = unsafe { IOHIDElementGetUsagePage(element) };
+    let usage = unsafe { IOHIDElementGetUsage(element) };
+    if usage_page != HID_PAGE_KEYBOARD_OR_KEYPAD || usage != HID_USAGE_KEYBOARD_CAPS_LOCK {
+        return;
+    }
+
+    let pressed = unsafe { IOHIDValueGetIntegerValue(value) } != 0;
+    if let Ok(mut guard) = global_hook_state().lock()
+        && let Some(state) = guard.as_mut()
+        && matches!(state.key, MacosPttKey::CapsLock { .. })
+        && pressed != state.modifier_pressed
+    {
+        state.modifier_pressed = pressed;
+        let raw_event = if pressed {
+            RawKeyEvent::Press
+        } else {
+            RawKeyEvent::Release
+        };
+        let _ = state.sender.send(raw_event);
+    }
 }
 
 pub struct MacosHookHandle {
@@ -249,18 +356,6 @@ impl MacosPttController {
                 }
                 let run_loop = CFRunLoopGetCurrent();
                 let retained_run_loop = CFRetain(run_loop) as CFRunLoopRef;
-                if run_loop_tx
-                    .send(RunLoopHandle::from_ptr(retained_run_loop))
-                    .is_err()
-                {
-                    CFRelease(retained_run_loop);
-                    CFRelease(source);
-                    CFRelease(tap);
-                    if let Ok(mut guard) = global_hook_state().lock() {
-                        *guard = None;
-                    }
-                    return;
-                }
                 if let Ok(mut guard) = global_hook_state().lock() {
                     *guard = Some(HookState {
                         key,
@@ -270,9 +365,52 @@ impl MacosPttController {
                         sender: raw_tx,
                     });
                 }
+                let hid_manager = if matches!(key, MacosPttKey::CapsLock { .. }) {
+                    match create_caps_lock_hid_manager(run_loop) {
+                        Some(manager) => Some(manager),
+                        None => {
+                            let _ = run_loop_tx.send(RunLoopHandle::null());
+                            CFRelease(retained_run_loop);
+                            CFRelease(source);
+                            CFRelease(tap);
+                            if let Ok(mut guard) = global_hook_state().lock() {
+                                *guard = None;
+                            }
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if run_loop_tx
+                    .send(RunLoopHandle::from_ptr(retained_run_loop))
+                    .is_err()
+                {
+                    if let Some(hid_manager) = hid_manager {
+                        IOHIDManagerUnscheduleFromRunLoop(
+                            hid_manager,
+                            run_loop,
+                            kCFRunLoopCommonModes,
+                        );
+                        let _ = IOHIDManagerClose(hid_manager, KIOHID_OPTIONS_TYPE_NONE);
+                        CFRelease(hid_manager);
+                    }
+                    CFRelease(retained_run_loop);
+                    CFRelease(source);
+                    CFRelease(tap);
+                    if let Ok(mut guard) = global_hook_state().lock() {
+                        *guard = None;
+                    }
+                    return;
+                }
                 CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
                 CGEventTapEnable(tap, 1);
                 CFRunLoopRun();
+                if let Some(hid_manager) = hid_manager {
+                    IOHIDManagerUnscheduleFromRunLoop(hid_manager, run_loop, kCFRunLoopCommonModes);
+                    let _ = IOHIDManagerClose(hid_manager, KIOHID_OPTIONS_TYPE_NONE);
+                    CFRelease(hid_manager);
+                }
                 CFRelease(source);
                 CFRelease(tap);
             }
@@ -375,17 +513,15 @@ fn worker_loop(
                 active_stop_signal = None;
             }
             Ok(RawKeyEvent::Release) => {
-                if activated {
-                    if let Some(stop_signal) = active_stop_signal.take() {
-                        stop_signal.store(true, Ordering::Relaxed);
-                    }
-                } else if physical_pressed && passthrough_short_press {
-                    let _ = send_key_tap(key);
-                }
-                physical_pressed = false;
-                activated = false;
-                press_started_at = None;
-                press_window = None;
+                finish_press(
+                    key,
+                    passthrough_short_press,
+                    &mut physical_pressed,
+                    &mut activated,
+                    &mut press_started_at,
+                    &mut press_window,
+                    &mut active_stop_signal,
+                );
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if !physical_pressed || activated {
@@ -412,6 +548,28 @@ fn worker_loop(
     }
 }
 
+fn finish_press(
+    key: MacosPttKey,
+    passthrough_short_press: bool,
+    physical_pressed: &mut bool,
+    activated: &mut bool,
+    press_started_at: &mut Option<Instant>,
+    press_window: &mut Option<WindowInfo>,
+    active_stop_signal: &mut Option<Arc<AtomicBool>>,
+) {
+    if *activated {
+        if let Some(stop_signal) = active_stop_signal.take() {
+            stop_signal.store(true, Ordering::Relaxed);
+        }
+    } else if *physical_pressed && passthrough_short_press {
+        let _ = send_key_tap(key);
+    }
+    *physical_pressed = false;
+    *activated = false;
+    *press_started_at = None;
+    *press_window = None;
+}
+
 fn parse_ptt_key(name: &str) -> Result<MacosPttKey> {
     let normalized = name.trim().to_ascii_lowercase();
     if let Some(value) = parse_function_key(&normalized) {
@@ -420,9 +578,12 @@ fn parse_ptt_key(name: &str) -> Result<MacosPttKey> {
     match normalized.as_str() {
         "space" => Ok(MacosPttKey::Regular { key_code: 49 }),
         "enter" => Ok(MacosPttKey::Regular { key_code: 36 }),
-        "capslock" | "caps-lock" | "caps_lock" => bail!(
-            "capslock is not supported for hold-to-talk on macOS; it is a toggle key. Use right-control, right-shift, left-win, or f1-f12 instead"
-        ),
+        "capslock" | "caps-lock" | "caps_lock" => Ok(MacosPttKey::CapsLock {
+            key_code: MACOS_KEY_CODE_CAPS_LOCK,
+        }),
+        "fn" | "function" | "globe" => Ok(MacosPttKey::Fn {
+            flag_mask: KCG_EVENT_FLAG_MASK_SECONDARY_FN,
+        }),
         "left-win" | "left_win" | "leftwin" | "lwin" | "windows" | "win" => {
             Ok(MacosPttKey::Modifier {
                 key_code: 55,
@@ -501,6 +662,8 @@ fn parse_letter_key(ch: char) -> Option<u16> {
 
 fn send_key_tap(key: MacosPttKey) -> Result<()> {
     let key_code = match key {
+        MacosPttKey::CapsLock { key_code } => key_code as u16,
+        MacosPttKey::Fn { .. } => return Ok(()),
         MacosPttKey::Regular { key_code } => key_code,
         MacosPttKey::Modifier { key_code, .. } => key_code as u16,
     };
@@ -524,6 +687,164 @@ fn send_key_tap(key: MacosPttKey) -> Result<()> {
         CFRelease(up);
     }
     Ok(())
+}
+
+unsafe fn create_caps_lock_hid_manager(run_loop: CFRunLoopRef) -> Option<IOHIDManagerRef> {
+    let manager = unsafe { IOHIDManagerCreate(ptr::null(), KIOHID_OPTIONS_TYPE_NONE) };
+    if manager.is_null() {
+        return None;
+    }
+
+    let device_matching = unsafe {
+        create_hid_matching_dictionary(
+            b"DeviceUsagePage\0".as_ptr().cast(),
+            b"DeviceUsage\0".as_ptr().cast(),
+            HID_PAGE_GENERIC_DESKTOP,
+            HID_USAGE_GENERIC_DESKTOP_KEYBOARD,
+        )
+    };
+    if device_matching.is_null() {
+        unsafe { CFRelease(manager) };
+        return None;
+    }
+    unsafe {
+        IOHIDManagerSetDeviceMatching(manager, device_matching);
+        CFRelease(device_matching);
+    }
+
+    let input_matching = unsafe {
+        create_hid_matching_dictionary(
+            b"UsagePage\0".as_ptr().cast(),
+            b"Usage\0".as_ptr().cast(),
+            HID_PAGE_KEYBOARD_OR_KEYPAD as i32,
+            HID_USAGE_KEYBOARD_CAPS_LOCK as i32,
+        )
+    };
+    if input_matching.is_null() {
+        unsafe { CFRelease(manager) };
+        return None;
+    }
+    unsafe {
+        IOHIDManagerSetInputValueMatching(manager, input_matching);
+        CFRelease(input_matching);
+        IOHIDManagerRegisterInputValueCallback(
+            manager,
+            Some(hid_input_value_callback),
+            ptr::null_mut(),
+        );
+    }
+
+    let result = unsafe { IOHIDManagerOpen(manager, KIOHID_OPTIONS_TYPE_NONE) };
+    if result != KIO_RETURN_SUCCESS {
+        unsafe { CFRelease(manager) };
+        return None;
+    }
+
+    unsafe {
+        IOHIDManagerScheduleWithRunLoop(manager, run_loop, kCFRunLoopCommonModes);
+    }
+
+    Some(manager)
+}
+
+unsafe fn create_hid_matching_dictionary(
+    usage_page_key: *const core::ffi::c_char,
+    usage_key: *const core::ffi::c_char,
+    usage_page: i32,
+    usage: i32,
+) -> CFMutableDictionaryRef {
+    let dict = unsafe {
+        CFDictionaryCreateMutable(
+            ptr::null(),
+            0,
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks,
+        )
+    };
+    if dict.is_null() {
+        return ptr::null_mut();
+    }
+
+    if unsafe { !set_cf_dictionary_i32(dict, usage_page_key, usage_page) }
+        || unsafe { !set_cf_dictionary_i32(dict, usage_key, usage) }
+    {
+        unsafe { CFRelease(dict) };
+        return ptr::null_mut();
+    }
+
+    dict
+}
+
+unsafe fn set_cf_dictionary_i32(
+    dict: CFMutableDictionaryRef,
+    key_name: *const core::ffi::c_char,
+    value: i32,
+) -> bool {
+    let key = unsafe { CFStringCreateWithCString(ptr::null(), key_name, KCF_STRING_ENCODING_UTF8) };
+    if key.is_null() {
+        return false;
+    }
+
+    let number = unsafe {
+        CFNumberCreate(
+            ptr::null(),
+            KCF_NUMBER_INT_TYPE,
+            &value as *const i32 as *const core::ffi::c_void,
+        )
+    };
+    if number.is_null() {
+        unsafe { CFRelease(key) };
+        return false;
+    }
+
+    unsafe {
+        CFDictionarySetValue(
+            dict,
+            key as *const core::ffi::c_void,
+            number as *const core::ffi::c_void,
+        );
+        CFRelease(number);
+        CFRelease(key);
+    }
+    true
+}
+
+#[link(name = "IOKit", kind = "framework")]
+unsafe extern "C" {
+    fn IOHIDManagerCreate(allocator: CFAllocatorRef, options: u32) -> IOHIDManagerRef;
+    fn IOHIDManagerSetDeviceMatching(manager: IOHIDManagerRef, matching: CFMutableDictionaryRef);
+    fn IOHIDManagerSetInputValueMatching(
+        manager: IOHIDManagerRef,
+        matching: CFMutableDictionaryRef,
+    );
+    fn IOHIDManagerRegisterInputValueCallback(
+        manager: IOHIDManagerRef,
+        callback: Option<
+            unsafe extern "C" fn(
+                *mut core::ffi::c_void,
+                IOReturn,
+                *mut core::ffi::c_void,
+                IOHIDValueRef,
+            ),
+        >,
+        context: *mut core::ffi::c_void,
+    );
+    fn IOHIDManagerScheduleWithRunLoop(
+        manager: IOHIDManagerRef,
+        run_loop: CFRunLoopRef,
+        run_loop_mode: CFStringRef,
+    );
+    fn IOHIDManagerUnscheduleFromRunLoop(
+        manager: IOHIDManagerRef,
+        run_loop: CFRunLoopRef,
+        run_loop_mode: CFStringRef,
+    );
+    fn IOHIDManagerOpen(manager: IOHIDManagerRef, options: u32) -> IOReturn;
+    fn IOHIDManagerClose(manager: IOHIDManagerRef, options: u32) -> IOReturn;
+    fn IOHIDValueGetElement(value: IOHIDValueRef) -> IOHIDElementRef;
+    fn IOHIDValueGetIntegerValue(value: IOHIDValueRef) -> CFIndex;
+    fn IOHIDElementGetUsagePage(element: IOHIDElementRef) -> u32;
+    fn IOHIDElementGetUsage(element: IOHIDElementRef) -> u32;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -565,8 +886,31 @@ unsafe extern "C" {
     fn CFRunLoopRun();
     fn CFRunLoopStop(rl: CFRunLoopRef);
     fn CFRunLoopWakeUp(rl: CFRunLoopRef);
+    fn CFStringCreateWithCString(
+        alloc: CFAllocatorRef,
+        c_str: *const core::ffi::c_char,
+        encoding: u32,
+    ) -> CFStringRef;
+    fn CFDictionaryCreateMutable(
+        allocator: CFAllocatorRef,
+        capacity: CFIndex,
+        key_callbacks: *const CFDictionaryKeyCallBacks,
+        value_callbacks: *const CFDictionaryValueCallBacks,
+    ) -> CFMutableDictionaryRef;
+    fn CFDictionarySetValue(
+        dict: CFMutableDictionaryRef,
+        key: *const core::ffi::c_void,
+        value: *const core::ffi::c_void,
+    );
+    fn CFNumberCreate(
+        allocator: CFAllocatorRef,
+        the_type: i32,
+        value_ptr: *const core::ffi::c_void,
+    ) -> CFNumberRef;
     fn CFRetain(value: *const core::ffi::c_void) -> *const core::ffi::c_void;
     fn CFRelease(value: *const core::ffi::c_void);
 
     static kCFRunLoopCommonModes: CFStringRef;
+    static kCFTypeDictionaryKeyCallBacks: CFDictionaryKeyCallBacks;
+    static kCFTypeDictionaryValueCallBacks: CFDictionaryValueCallBacks;
 }

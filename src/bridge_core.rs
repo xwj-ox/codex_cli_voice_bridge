@@ -50,11 +50,19 @@ pub async fn run_bridge_loop(
                     break;
                 };
                 let target_window = activation.target_window;
-                if !platform.window_service.is_usable_target(
+                let target_capture_missing = target_window.process_name.trim().is_empty();
+                let target_is_usable = platform.window_service.is_usable_target(
                     Some(&target_window),
                     &config.require_title,
                     config.forbid_host_window_target,
-                ) {
+                );
+                if target_is_usable {
+                    print_target_window(&target_window);
+                } else if target_capture_missing {
+                    println!(
+                        "[BRIDGE] no foreground paste target was captured; recognition will still run, but this utterance will not be pasted."
+                    );
+                } else {
                     println!(
                         "[BRIDGE] current foreground window is not an allowed target ({} | {}); skipping this utterance.",
                         target_window.process_name,
@@ -65,7 +73,6 @@ pub async fn run_bridge_loop(
                 }
 
                 utterance_index += 1;
-                print_target_window(&target_window);
                 println!("\n[BRIDGE] listening for utterance #{} ...", utterance_index);
                 play_cue_if_enabled(config, &*platform.cue_player, CueKind::Listen);
                 preview.reset();
@@ -115,13 +122,23 @@ pub async fn run_bridge_loop(
 
                         let final_text = json_result["final_text"].as_str().unwrap_or_default().trim().to_owned();
                         if final_text.is_empty() {
-                            println!("[BRIDGE] empty final text; nothing pasted.");
+                            println!(
+                                "[BRIDGE] empty final text; nothing pasted. got_final={}, sent_audio_bytes={}, sent_chunk_count={}",
+                                result.got_final,
+                                result.sent_audio_bytes,
+                                result.sent_chunk_count
+                            );
                             play_cue_if_enabled(config, &*platform.cue_player, CueKind::Error);
                             continue;
                         }
 
                         println!("[BRIDGE] final text #{}: {}", utterance_index, final_text);
                         play_cue_if_enabled(config, &*platform.cue_player, CueKind::Recognized);
+                        if !target_is_usable {
+                            println!("[BRIDGE] no usable paste target captured; final text was not pasted.");
+                            play_cue_if_enabled(config, &*platform.cue_player, CueKind::Error);
+                            continue;
+                        }
                         if let Err(error) = platform.text_injector.paste_text(
                             &target_window,
                             &final_text,
@@ -154,6 +171,7 @@ pub async fn run_bridge_loop(
 }
 
 fn print_startup_banner(config: &BridgeRuntimeConfig) {
+    let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
     println!("[BRIDGE] The foreground window at long-press time becomes the target input window.");
     println!(
@@ -168,20 +186,28 @@ fn print_startup_banner(config: &BridgeRuntimeConfig) {
     println!(
         "[BRIDGE] PTT activates after holding for {} ms. Short taps are {}.",
         config.ptt_hold_ms,
-        if config.ptt_short_press_passthrough {
+        if uses_fn_ptt {
+            "not replayed for `fn`"
+        } else if config.ptt_short_press_passthrough {
             "passed through normally"
         } else {
             "ignored"
         }
     );
+    if uses_fn_ptt {
+        println!(
+            "[BRIDGE] macOS note: using `fn` as the PTT key disables Fn/Globe shortcuts and `fn+...` key combinations while the bridge is running."
+        );
+    }
     println!(
         "[BRIDGE] upload format: {} Hz / {} ch / {}-bit PCM (local capture is converted only if needed)",
-        config.upload_sample_rate,
-        config.upload_channels,
-        config.upload_bits
+        config.upload_sample_rate, config.upload_channels, config.upload_bits
     );
     if !config.require_title.trim().is_empty() {
-        println!("[BRIDGE] Window title must contain: {}", config.require_title.trim());
+        println!(
+            "[BRIDGE] Window title must contain: {}",
+            config.require_title.trim()
+        );
     }
     if config.forbid_host_window_target {
         println!("[BRIDGE] Host window targeting is disabled for this run.");
@@ -195,7 +221,10 @@ fn print_target_window(window: &WindowInfo) {
     } else {
         window.title.as_str()
     };
-    println!("[BRIDGE] target window: {} | {}", window.process_name, title);
+    println!(
+        "[BRIDGE] target window: {} | {}",
+        window.process_name, title
+    );
 }
 
 fn play_cue_if_enabled(
@@ -206,6 +235,13 @@ fn play_cue_if_enabled(
     if config.cue_sounds {
         cue_player.play(cue);
     }
+}
+
+fn ptt_key_uses_fn(key_name: &str) -> bool {
+    matches!(
+        key_name.trim().to_ascii_lowercase().as_str(),
+        "fn" | "function" | "globe"
+    )
 }
 
 pub fn save_result_json(
@@ -235,12 +271,16 @@ pub fn save_result_json(
 
     if let Some(parent) = target_path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create output directory: {}", parent.display())
+            })?;
         }
     }
-    fs::write(&target_path, format!("{}\n", serde_json::to_string_pretty(result)?))
-        .with_context(|| format!("Failed to write output JSON: {}", target_path.display()))?;
+    fs::write(
+        &target_path,
+        format!("{}\n", serde_json::to_string_pretty(result)?),
+    )
+    .with_context(|| format!("Failed to write output JSON: {}", target_path.display()))?;
     println!("Saved result JSON: {}", target_path.display());
     Ok(Some(target_path))
 }

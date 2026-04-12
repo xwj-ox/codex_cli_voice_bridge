@@ -1,9 +1,32 @@
 use std::env;
-use std::process::Command;
+use std::ffi::CString;
+use std::ptr;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::platform::types::WindowInfo;
+
+type AXError = i32;
+type AXUIElementRef = *mut core::ffi::c_void;
+type Boolean = u8;
+type CFAllocatorRef = *const core::ffi::c_void;
+type CFIndex = isize;
+type CFStringRef = *const core::ffi::c_void;
+type CFTypeRef = *const core::ffi::c_void;
+type OSErr = i32;
+type Pid = i32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProcessSerialNumber {
+    high_long_of_psn: u32,
+    low_long_of_psn: u32,
+}
+
+const KCF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+const AX_ATTR_FOCUSED_WINDOW: &str = "AXFocusedWindow";
+const AX_ATTR_TITLE: &str = "AXTitle";
+const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.08;
 
 #[derive(Debug, Clone)]
 pub struct MacosHostContext {
@@ -36,8 +59,8 @@ impl MacosHostContext {
 
 pub fn get_frontmost_window_info() -> Option<WindowInfo> {
     match read_frontmost_window() {
-        Ok(Some((process_name, title))) => Some(WindowInfo {
-            hwnd: 1,
+        Ok(Some((process_name, title, pid))) => Some(WindowInfo {
+            hwnd: pid as isize,
             title,
             process_name,
         }),
@@ -98,32 +121,150 @@ fn push_unique_name(values: &mut Vec<String>, candidate: &str) {
     values.push(candidate.to_owned());
 }
 
-fn read_frontmost_window() -> Result<Option<(String, String)>> {
-    let script = r#"
-tell application "System Events"
-    set frontApp to first application process whose frontmost is true
-    set appName to name of frontApp
-    set windowTitle to ""
-    try
-        set windowTitle to name of front window of frontApp
-    end try
-    return appName & linefeed & windowTitle
-end tell
-"#;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .context("Failed to run osascript for frontmost window detection")?;
-    if !output.status.success() {
-        return Ok(None);
+fn read_frontmost_window() -> Result<Option<(String, String, Pid)>> {
+    unsafe {
+        let mut psn = ProcessSerialNumber {
+            high_long_of_psn: 0,
+            low_long_of_psn: 0,
+        };
+        os_status(GetFrontProcess(&mut psn), "GetFrontProcess")?;
+
+        let mut pid = 0;
+        os_status(GetProcessPID(&psn, &mut pid), "GetProcessPID")?;
+        if pid <= 0 {
+            return Ok(None);
+        }
+
+        let mut process_name_ref: CFStringRef = ptr::null();
+        os_status(
+            CopyProcessName(&psn, &mut process_name_ref),
+            "CopyProcessName",
+        )?;
+        let process_name = cf_string_to_string(process_name_ref).unwrap_or_default();
+        if !process_name_ref.is_null() {
+            CFRelease(process_name_ref as *const core::ffi::c_void);
+        }
+        if process_name.trim().is_empty() {
+            bail!("Frontmost macOS process name is empty");
+        }
+
+        let title = read_focused_window_title(pid).unwrap_or_default();
+        Ok(Some((process_name, title, pid)))
     }
-    let text = String::from_utf8_lossy(&output.stdout).replace('\r', "");
-    let mut lines = text.lines();
-    let app_name = lines.next().unwrap_or_default().trim().to_owned();
-    let title = lines.next().unwrap_or_default().trim().to_owned();
-    if app_name.is_empty() {
-        return Ok(None);
+}
+
+fn read_focused_window_title(pid: Pid) -> Result<String> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            bail!("AXUIElementCreateApplication returned null");
+        }
+        let _ = AXUIElementSetMessagingTimeout(app, AX_MESSAGING_TIMEOUT_SECONDS);
+
+        let focused_window_attr = create_cf_string(AX_ATTR_FOCUSED_WINDOW)?;
+        let mut focused_window: CFTypeRef = ptr::null();
+        let focused_window_result =
+            AXUIElementCopyAttributeValue(app, focused_window_attr, &mut focused_window);
+        CFRelease(focused_window_attr as *const core::ffi::c_void);
+        if focused_window_result != 0 || focused_window.is_null() {
+            CFRelease(app as *const core::ffi::c_void);
+            return Ok(String::new());
+        }
+
+        let title_attr = create_cf_string(AX_ATTR_TITLE)?;
+        let mut title_value: CFTypeRef = ptr::null();
+        let title_result = AXUIElementCopyAttributeValue(
+            focused_window as AXUIElementRef,
+            title_attr,
+            &mut title_value,
+        );
+        CFRelease(title_attr as *const core::ffi::c_void);
+        CFRelease(focused_window);
+        CFRelease(app as *const core::ffi::c_void);
+
+        if title_result != 0 || title_value.is_null() {
+            return Ok(String::new());
+        }
+
+        let title = cf_string_to_string(title_value as CFStringRef).unwrap_or_default();
+        CFRelease(title_value);
+        Ok(title)
     }
-    Ok(Some((app_name, title)))
+}
+
+fn create_cf_string(value: &str) -> Result<CFStringRef> {
+    let c_value = CString::new(value).context("CString conversion failed")?;
+    let cf_string = unsafe {
+        CFStringCreateWithCString(ptr::null(), c_value.as_ptr(), KCF_STRING_ENCODING_UTF8)
+    };
+    if cf_string.is_null() {
+        bail!("CFStringCreateWithCString returned null");
+    }
+    Ok(cf_string)
+}
+
+fn cf_string_to_string(value: CFStringRef) -> Result<String> {
+    if value.is_null() {
+        return Ok(String::new());
+    }
+
+    unsafe {
+        let length = CFStringGetLength(value);
+        let max_size = CFStringGetMaximumSizeForEncoding(length, KCF_STRING_ENCODING_UTF8);
+        let mut buffer = vec![0u8; max_size as usize + 1];
+        let ok = CFStringGetCString(
+            value,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as CFIndex,
+            KCF_STRING_ENCODING_UTF8,
+        );
+        if ok == 0 {
+            bail!("CFStringGetCString failed");
+        }
+        let nul = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
+        Ok(String::from_utf8_lossy(&buffer[..nul]).into_owned())
+    }
+}
+
+fn os_status(status: OSErr, label: &str) -> Result<()> {
+    if status == 0 {
+        return Ok(());
+    }
+    bail!("{label} failed with status {status}");
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn GetFrontProcess(psn: *mut ProcessSerialNumber) -> OSErr;
+    fn GetProcessPID(psn: *const ProcessSerialNumber, pid: *mut Pid) -> OSErr;
+    fn CopyProcessName(psn: *const ProcessSerialNumber, name: *mut CFStringRef) -> OSErr;
+
+    fn AXUIElementCreateApplication(pid: Pid) -> AXUIElementRef;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> AXError;
+    fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout_in_seconds: f32) -> AXError;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFRelease(value: *const core::ffi::c_void);
+    fn CFStringCreateWithCString(
+        allocator: CFAllocatorRef,
+        c_str: *const core::ffi::c_char,
+        encoding: u32,
+    ) -> CFStringRef;
+    fn CFStringGetCString(
+        the_string: CFStringRef,
+        buffer: *mut core::ffi::c_char,
+        buffer_size: CFIndex,
+        encoding: u32,
+    ) -> Boolean;
+    fn CFStringGetLength(the_string: CFStringRef) -> CFIndex;
+    fn CFStringGetMaximumSizeForEncoding(length: CFIndex, encoding: u32) -> CFIndex;
 }

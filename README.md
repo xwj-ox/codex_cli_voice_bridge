@@ -21,7 +21,7 @@ Minimal public repository for the Rust implementation of the Doubao ASR CLI and 
 ## Current status
 
 - Windows build path is implemented and locally verified
-- macOS source scaffolding is in place, but full build/runtime validation still requires a real macOS environment
+- macOS build path is implemented and locally package-verified; runtime still requires the host app to have macOS privacy permissions
 
 ## Quick start
 
@@ -43,11 +43,34 @@ Run the bridge:
 cargo run --bin voice_bridge
 ```
 
+## Credentials
+
+Credentials are resolved in this order:
+
+1. CLI arguments: `--app-id` and `--access-token`
+2. Environment variables: `DOUBAO_ASR_APP_ID` and `DOUBAO_ASR_ACCESS_TOKEN`
+3. `doubao_credentials.json` in the current working directory or project root
+
+Use environment variables if you do not want to create a JSON file:
+
+```bash
+export DOUBAO_ASR_APP_ID="your_app_id"
+export DOUBAO_ASR_ACCESS_TOKEN="your_access_token"
+cargo run --bin voice_bridge
+```
+
+Or pass credentials directly for one run:
+
+```bash
+cargo run --bin voice_bridge -- --app-id "your_app_id" --access-token "your_access_token"
+```
+
 ## Defaults
 
 - `voice_bridge` enables `enable_nonstream` by default
 - Windows default PTT key: `capslock`
-- macOS default PTT key: `right-control`
+- macOS default PTT key: `capslock`
+- macOS also supports `fn` as a PTT key; when `fn` is used for PTT, Fn/Globe shortcuts and `fn+...` key combinations are unavailable while the bridge is running
 - Default PTT hold threshold: `250 ms`
 - Default maximum recording duration: `60 s`
 
@@ -68,4 +91,4 @@ bash ./packaging/build_macos_release.sh
 
 ## Security note
 
-Do not commit `doubao_credentials.json`. Use `doubao_credentials.example.json` as the template for local setup.
+Do not commit real credentials. If you use a file, keep `doubao_credentials.json` local and use `doubao_credentials.example.json` only as the template.

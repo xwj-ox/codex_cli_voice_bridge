@@ -14,21 +14,13 @@ use codex_cli_voice_bridge_rust::protocol::{DEFAULT_RESOURCE_ID, DEFAULT_WS_URL}
 const MIC_UPLOAD_SAMPLE_RATE: u32 = 16000;
 const MIC_UPLOAD_BITS: u16 = 16;
 const MIC_UPLOAD_CHANNELS: u16 = 1;
-#[cfg(target_os = "windows")]
 const DEFAULT_PTT_KEY: &str = "capslock";
 #[cfg(target_os = "macos")]
-const DEFAULT_PTT_KEY: &str = "right-control";
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const DEFAULT_PTT_KEY: &str = "right-control";
-#[cfg(target_os = "windows")]
+const PTT_KEY_HELP: &str =
+    "PTT key: space, enter, capslock, fn, left-win, right-control, right-shift, f1-f12, or a single letter";
+#[cfg(not(target_os = "macos"))]
 const PTT_KEY_HELP: &str =
     "PTT key: space, enter, capslock, left-win, right-control, right-shift, f1-f12, or a single letter";
-#[cfg(target_os = "macos")]
-const PTT_KEY_HELP: &str =
-    "PTT key: space, enter, left-win, right-control, right-shift, f1-f12, or a single letter";
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const PTT_KEY_HELP: &str =
-    "PTT key: space, enter, right-control, right-shift, f1-f12, or a single letter";
 
 #[derive(Debug, Parser)]
 #[command(

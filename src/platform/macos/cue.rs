@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use crate::platform::types::CueKind;
 
@@ -14,6 +15,17 @@ pub fn play_cue(enabled: bool, kind: CueKind) {
         CueKind::Error => 3,
     };
 
-    let script = format!("repeat {repeat_count} times\nbeep\nend repeat");
-    let _ = Command::new("osascript").arg("-e").arg(script).status();
+    thread::spawn(move || {
+        for index in 0..repeat_count {
+            unsafe { NSBeep() };
+            if index + 1 < repeat_count {
+                thread::sleep(Duration::from_millis(110));
+            }
+        }
+    });
+}
+
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {
+    fn NSBeep();
 }
