@@ -172,6 +172,7 @@ pub async fn run_bridge_loop(
 
 fn print_startup_banner(config: &BridgeRuntimeConfig) {
     let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
+    let uses_caps_lock_ptt = ptt_key_uses_caps_lock(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
     println!("[BRIDGE] The foreground window at long-press time becomes the target input window.");
     println!(
@@ -197,6 +198,11 @@ fn print_startup_banner(config: &BridgeRuntimeConfig) {
     if uses_fn_ptt {
         println!(
             "[BRIDGE] macOS note: using `fn` as the PTT key disables Fn/Globe shortcuts and `fn+...` key combinations while the bridge is running."
+        );
+    }
+    if uses_caps_lock_ptt && cfg!(target_os = "macos") {
+        println!(
+            "[BRIDGE] macOS note: `capslock` is a system special key. While the bridge is running, it can still switch between non-Latin and Latin input sources, or trigger Caps Lock / continuous uppercase behavior."
         );
     }
     println!(
@@ -241,6 +247,13 @@ fn ptt_key_uses_fn(key_name: &str) -> bool {
     matches!(
         key_name.trim().to_ascii_lowercase().as_str(),
         "fn" | "function" | "globe"
+    )
+}
+
+fn ptt_key_uses_caps_lock(key_name: &str) -> bool {
+    matches!(
+        key_name.trim().to_ascii_lowercase().as_str(),
+        "capslock" | "caps-lock" | "caps_lock"
     )
 }
 

@@ -77,6 +77,7 @@ Credential priority is CLI arguments, then environment variables, then `doubao_c
 ## Notes
 
 - On macOS, microphone permission is requested by the audio capture path when recording starts.
+- If you use `capslock` as the PTT key, macOS can still switch between non-Latin and Latin input sources, or trigger Caps Lock / continuous uppercase while the bridge is running because `capslock` remains a system special key.
 - If you configure `fn` as the PTT key, Fn/Globe shortcuts and `fn+...` key combinations are unavailable while the bridge is running.
 - The target window is captured at long-press time, then the final text is pasted back into that app.
 - If you distribute the bundle to another machine, that machine still needs its own privacy permission grants.

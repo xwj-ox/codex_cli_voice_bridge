@@ -158,6 +158,7 @@ cargo run --bin voice_bridge -- --app-id "your_app_id" --access-token "your_acce
 - Windows default PTT key: `capslock`
 - Windows supported PTT keys: `space`, `enter`, `capslock`, `left-win`, `right-control`, `right-shift`, `f1` through `f12`, or a single letter. Windows does not support `fn` as the PTT key because Fn is not exposed as a standard Windows virtual key.
 - macOS default PTT key: `capslock`
+- On macOS, `capslock` remains a system special key. While it is used as the PTT key, it can still switch between non-Latin and Latin input sources, or trigger Caps Lock / continuous uppercase behavior.
 - macOS also supports `fn` as a PTT key; when `fn` is used for PTT, Fn/Globe shortcuts and `fn+...` key combinations are unavailable while the bridge is running
 - Default PTT hold threshold: `250 ms`
 - Default maximum recording duration: `60 s`
