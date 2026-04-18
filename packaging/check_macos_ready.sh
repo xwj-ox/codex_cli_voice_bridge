@@ -26,8 +26,6 @@ check_cmd xcode-select
 check_cmd clang
 check_cmd cargo
 check_cmd rustup
-check_cmd osascript
-check_cmd pbcopy
 
 if command -v xcode-select >/dev/null 2>&1; then
   if xcode-select -p >/dev/null 2>&1; then

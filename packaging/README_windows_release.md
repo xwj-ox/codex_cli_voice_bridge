@@ -97,5 +97,5 @@ Credential priority is CLI arguments, then environment variables, then `doubao_c
 - Windows does not support `fn` as the PTT key because Fn is not exposed as a standard Windows virtual key.
 - If the target application is running as Administrator, run `voice_bridge.exe` with matching privileges; Windows can block input injection from a lower-privilege process into an elevated window.
 - Microphone access must be enabled in Windows Privacy & security settings.
-- The target window is captured at long-press time, then the final text is pasted back into that app.
+- The target window is captured on the initial key-down, then the final text is pasted back into that app.
 - If you distribute the bundle to another machine, that machine still needs its own credential and microphone setup.
