@@ -121,6 +121,22 @@ pub async fn run_bridge_loop(
                         let _ = save_result_json(&json_result, &config.output_json, utterance_index)?;
 
                         let final_text = json_result["final_text"].as_str().unwrap_or_default().trim().to_owned();
+                        if !result.got_final {
+                            if final_text.is_empty() {
+                                println!(
+                                    "[BRIDGE] ASR did not return a final result before timeout; nothing was pasted. sent_audio_bytes={}, sent_chunk_count={}",
+                                    result.sent_audio_bytes,
+                                    result.sent_chunk_count
+                                );
+                            } else {
+                                println!(
+                                    "[BRIDGE] ASR did not return a final result before timeout; latest interim text was not pasted: {}",
+                                    final_text
+                                );
+                            }
+                            play_cue_if_enabled(config, &*platform.cue_player, CueKind::Error);
+                            continue;
+                        }
                         if final_text.is_empty() {
                             println!(
                                 "[BRIDGE] empty final text; nothing pasted. got_final={}, sent_audio_bytes={}, sent_chunk_count={}",
@@ -174,7 +190,7 @@ fn print_startup_banner(config: &BridgeRuntimeConfig) {
     let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
     let uses_caps_lock_ptt = ptt_key_uses_caps_lock(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
-    println!("[BRIDGE] The foreground window at long-press time becomes the target input window.");
+    println!("[BRIDGE] The foreground window at initial key-down becomes the target input window.");
     println!(
         "[BRIDGE] Hold `{}` to talk, release to finish one utterance. {}",
         config.ptt_key_display,

@@ -101,10 +101,9 @@ pub struct KeyboardPttController {
 impl KeyboardPttController {
     pub fn new(vk_code: u32, hold_ms: u64, passthrough_short_press: bool) -> Result<Self> {
         let (raw_tx, raw_rx) = mpsc::channel();
-        let (thread_id_tx, thread_id_rx) = mpsc::channel();
+        let (hook_init_tx, hook_init_rx) = mpsc::channel();
         let join_handle = thread::spawn(move || {
             let thread_id = unsafe { GetCurrentThreadId() };
-            let _ = thread_id_tx.send(thread_id);
 
             if let Ok(mut guard) = global_hook_state().lock() {
                 *guard = Some(HookState {
@@ -119,8 +118,10 @@ impl KeyboardPttController {
                 if let Ok(mut guard) = global_hook_state().lock() {
                     *guard = None;
                 }
+                let _ = hook_init_tx.send(Err("SetWindowsHookExW failed".to_owned()));
                 return;
             };
+            let _ = hook_init_tx.send(Ok(thread_id));
 
             let mut msg = MSG::default();
             loop {
@@ -142,9 +143,10 @@ impl KeyboardPttController {
             }
         });
 
-        let thread_id = thread_id_rx
+        let thread_id = hook_init_rx
             .recv_timeout(Duration::from_secs(2))
-            .map_err(|_| anyhow!("Failed to initialize keyboard hook thread"))?;
+            .map_err(|_| anyhow!("Failed to initialize keyboard hook thread"))?
+            .map_err(|error| anyhow!(error))?;
 
         let (activation_tx, activation_rx) = unbounded_channel();
         let exit_flag = Arc::new(AtomicBool::new(false));

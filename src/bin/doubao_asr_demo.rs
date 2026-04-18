@@ -268,10 +268,14 @@ async fn main() -> Result<()> {
         "logs": result.logs,
     });
 
-    println!(
-        "ASR Final Text: {}",
-        json_result["final_text"].as_str().unwrap_or_default()
-    );
+    let final_text = json_result["final_text"].as_str().unwrap_or_default().trim();
+    if result.got_final {
+        println!("ASR Final Text: {final_text}");
+    } else if final_text.is_empty() {
+        println!("ASR did not return a final result before timeout.");
+    } else {
+        println!("ASR did not return a final result before timeout. Latest interim text: {final_text}");
+    }
     save_result_json(&args.output_json, &json_result)?;
     Ok(())
 }

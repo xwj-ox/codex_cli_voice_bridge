@@ -36,9 +36,6 @@ pub struct MacosHostContext {
 impl MacosHostContext {
     pub fn detect() -> Self {
         let mut host_process_names = Vec::new();
-        if let Some(window) = get_frontmost_window_info() {
-            push_unique_name(&mut host_process_names, &window.process_name);
-        }
         if let Ok(path) = env::current_exe() {
             if let Some(name) = path.file_stem().and_then(|value| value.to_str()) {
                 push_unique_name(&mut host_process_names, name);
@@ -52,6 +49,7 @@ impl MacosHostContext {
                 }
             }
         }
+        push_terminal_host_names(&mut host_process_names);
 
         Self { host_process_names }
     }
@@ -119,6 +117,37 @@ fn push_unique_name(values: &mut Vec<String>, candidate: &str) {
         return;
     }
     values.push(candidate.to_owned());
+}
+
+fn push_terminal_host_names(values: &mut Vec<String>) {
+    for key in ["TERM_PROGRAM", "TERM_PROGRAM_APP", "LC_TERMINAL"] {
+        if let Ok(value) = env::var(key) {
+            push_host_aliases(values, &value);
+        }
+    }
+}
+
+fn push_host_aliases(values: &mut Vec<String>, candidate: &str) {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return;
+    }
+    push_unique_name(values, candidate);
+    if let Some(value) = candidate.strip_suffix(".app") {
+        push_unique_name(values, value);
+    }
+    match normalize_process_name(candidate).as_str() {
+        "apple_terminal" => push_unique_name(values, "Terminal"),
+        "iterm.app" | "iterm" | "iterm2" => {
+            push_unique_name(values, "iTerm");
+            push_unique_name(values, "iTerm2");
+        }
+        "warpterminal" | "warp" => {
+            push_unique_name(values, "Warp");
+            push_unique_name(values, "WarpTerminal");
+        }
+        _ => {}
+    }
 }
 
 fn read_frontmost_window() -> Result<Option<(String, String, Pid)>> {
