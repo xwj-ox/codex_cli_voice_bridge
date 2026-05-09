@@ -31,65 +31,204 @@ enum InputSource {
 struct Args {
     #[arg(long, value_enum, default_value_t = InputSource::File, help = "Input source: file reads a local audio file, mic records a fixed-duration utterance")]
     input_source: InputSource,
-    #[arg(long, default_value = "", help = "Path to the local audio file; required when --input-source file")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Path to the local audio file; required when --input-source file"
+    )]
     audio_file: String,
-    #[arg(long, default_value = "pcm", help = "Input audio format. The docs use raw/pcm for microphone-style uploads")]
+    #[arg(
+        long,
+        default_value = "pcm",
+        help = "Input audio format. The docs use raw/pcm for microphone-style uploads"
+    )]
     audio_format: String,
-    #[arg(long, default_value = "", help = "Doubao app_id; falls back to the credentials file when omitted")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao app_id; falls back to the credentials file when omitted"
+    )]
     app_id: String,
-    #[arg(long, default_value = "", help = "Doubao access_token; falls back to the credentials file when omitted")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao access_token; falls back to the credentials file when omitted"
+    )]
     access_token: String,
     #[arg(long, default_value = DEFAULT_RESOURCE_ID, help = "Doubao ASR resource_id; docs list volc.bigasr.sauc.duration/concurrent for 1.0 and volc.seedasr.sauc.duration/concurrent for 2.0")]
     resource_id: String,
     #[arg(long, default_value = DEFAULT_WS_URL, help = "Doubao WebSocket URL; default is the optimized bidirectional endpoint /api/v3/sauc/bigmodel_async")]
     ws_url: String,
-    #[arg(long, default_value = "", help = "Optional connect_id for tracing a session end-to-end")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Optional connect_id for tracing a session end-to-end"
+    )]
     connect_id: String,
-    #[arg(long, default_value = "", help = "User ID sent in the request; a random one is generated when omitted")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "User ID sent in the request; a random one is generated when omitted"
+    )]
     uid: String,
-    #[arg(long, default_value_t = 16000, help = "Input sample rate in Hz for file mode; mic mode always uploads 16000 Hz after conversion")]
+    #[arg(
+        long,
+        default_value_t = 16000,
+        help = "Input sample rate in Hz for file mode; mic mode always uploads 16000 Hz after conversion"
+    )]
     sample_rate: u32,
-    #[arg(long, default_value_t = 16, help = "Input bit depth for file mode; mic mode always uploads 16-bit PCM after conversion")]
+    #[arg(
+        long,
+        default_value_t = 16,
+        help = "Input bit depth for file mode; mic mode always uploads 16-bit PCM after conversion"
+    )]
     bits: u16,
-    #[arg(long, default_value_t = 1, help = "Input channel count for file mode; mic mode always uploads mono after conversion")]
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "Input channel count for file mode; mic mode always uploads mono after conversion"
+    )]
     channels: u16,
-    #[arg(long, default_value = "", help = "Optional language hint; official docs say it is only supported by bigmodel_nostream and not by the second-pass recognition path")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Optional language hint; official docs say it is only supported by bigmodel_nostream and not by the second-pass recognition path"
+    )]
     language: String,
-    #[arg(long, default_value_t = 10.0, help = "Microphone recording duration in seconds when --input-source mic")]
+    #[arg(
+        long,
+        default_value_t = 10.0,
+        help = "Microphone recording duration in seconds when --input-source mic"
+    )]
     mic_duration: f32,
-    #[arg(long, default_value = "", help = "Microphone selector: device index or a case-insensitive name substring")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Microphone selector: device index or a case-insensitive name substring"
+    )]
     mic_device: String,
     #[arg(long, help = "List available input devices and exit")]
     mic_list_devices: bool,
-    #[arg(long, default_value_t = 200, help = "Audio chunk size before upload; official docs recommend about 100-200 ms, and 200 ms is preferred for bigmodel_async")]
+    #[arg(
+        long,
+        default_value_t = 200,
+        help = "Audio chunk size before upload; official docs recommend about 100-200 ms, and 200 ms is preferred for bigmodel_async"
+    )]
     chunk_ms: u32,
-    #[arg(long, default_value_t = 0, help = "Optional fixed chunk size in bytes; 0 means derive from chunk_ms")]
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Optional fixed chunk size in bytes; 0 means derive from chunk_ms"
+    )]
     chunk_bytes: usize,
-    #[arg(long, default_value_t = 200, help = "Delay between sending audio chunks in milliseconds; official docs recommend about 100-200 ms and warn against values that are too large or too small")]
+    #[arg(
+        long,
+        default_value_t = 200,
+        help = "Delay between sending audio chunks in milliseconds; official docs recommend about 100-200 ms and warn against values that are too large or too small"
+    )]
     send_interval_ms: u64,
     #[arg(long, default_value = "bigmodel", help = "Doubao ASR model name")]
     model_name: String,
-    #[arg(long, default_value_t = true, help = "Enable ITN text normalization, e.g. turning spoken numerals into written forms like year 1970 or amount $123")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable ITN text normalization, e.g. turning spoken numerals into written forms like year 1970 or amount $123"
+    )]
     enable_itn: bool,
-    #[arg(long, default_value_t = true, help = "Enable punctuation insertion; official docs say this defaults to true")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable punctuation insertion; official docs say this defaults to true"
+    )]
     enable_punc: bool,
-    #[arg(long, default_value_t = false, help = "Enable semantic smoothing (DDC, likely Disfluency Detection and Correction), which removes fillers, hesitations, and repeated words to improve readability; official docs say this defaults to false")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Enable semantic smoothing (DDC, likely Disfluency Detection and Correction), which removes fillers, hesitations, and repeated words to improve readability; official docs say this defaults to false"
+    )]
     enable_ddc: bool,
-    #[arg(long, default_value_t = false, help = "Enable second-pass recognition: on the optimized bidirectional API, each finalized VAD segment is re-recognized with the nostream model to improve final accuracy")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Enable second-pass recognition: on the optimized bidirectional API, each finalized VAD segment is re-recognized with the nostream model to improve final accuracy"
+    )]
     enable_nonstream: bool,
-    #[arg(long, default_value_t = true, help = "Return utterance-level segmentation details such as pauses, sentence splits, and word information")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Return utterance-level segmentation details such as pauses, sentence splits, and word information"
+    )]
     show_utterances: bool,
-    #[arg(long, default_value = "full", help = "Result return mode: full returns all utterances each time; single returns only the current utterance and is intended to be used with show_utterances=true")]
+    #[arg(
+        long,
+        default_value = "full",
+        help = "Result return mode: full returns all utterances each time; single returns only the current utterance and is intended to be used with show_utterances=true"
+    )]
     result_type: String,
-    #[arg(long, default_value_t = 10.0, help = "Handshake and per-frame timeout in seconds")]
+    #[arg(
+        long,
+        help = "Contextual ASR hotword; repeat to add multiple words (sets request.corpus.context as a hotwords JSON string)"
+    )]
+    asr_hotword: Vec<String>,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Raw request.corpus.context string (a JSON string payload); when set, --asr-hotword is ignored"
+    )]
+    asr_corpus_context: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning hotword table name (request.corpus.boosting_table_name)"
+    )]
+    asr_boosting_table_name: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning hotword table id (request.corpus.boosting_table_id)"
+    )]
+    asr_boosting_table_id: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning replacement table name (request.corpus.correct_table_name)"
+    )]
+    asr_correct_table_name: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning replacement table id (request.corpus.correct_table_id)"
+    )]
+    asr_correct_table_id: String,
+    #[arg(
+        long,
+        default_value_t = 10.0,
+        help = "Handshake and per-frame timeout in seconds"
+    )]
     timeout: f64,
-    #[arg(long, default_value_t = 15.0, help = "Final result wait timeout in seconds after audio upload finishes")]
+    #[arg(
+        long,
+        default_value_t = 15.0,
+        help = "Final result wait timeout in seconds after audio upload finishes"
+    )]
     final_timeout: f64,
-    #[arg(long, default_value = "", help = "Write the final JSON result to this path; empty disables file output")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Write the final JSON result to this path; empty disables file output"
+    )]
     output_json: String,
-    #[arg(long, default_value_t = false, help = "Reduce console output to only essential lines")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Reduce console output to only essential lines"
+    )]
     quiet: bool,
-    #[arg(long, default_value = "", help = "Path to doubao_credentials.json; defaults to the current working directory")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Path to doubao_credentials.json; defaults to the current working directory"
+    )]
     credentials: String,
 }
 
@@ -100,12 +239,16 @@ fn save_result_json(path: &str, result: &serde_json::Value) -> Result<()> {
     let target_path = PathBuf::from(path);
     if let Some(parent) = target_path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create output directory: {}", parent.display())
+            })?;
         }
     }
-    fs::write(&target_path, format!("{}\n", serde_json::to_string_pretty(result)?))
-        .with_context(|| format!("Failed to write output JSON: {}", target_path.display()))?;
+    fs::write(
+        &target_path,
+        format!("{}\n", serde_json::to_string_pretty(result)?),
+    )
+    .with_context(|| format!("Failed to write output JSON: {}", target_path.display()))?;
     Ok(())
 }
 
@@ -120,10 +263,18 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         for (index, device) in devices.iter().enumerate() {
-            let marker = if device.is_default_input { " (default)" } else { "" };
+            let marker = if device.is_default_input {
+                " (default)"
+            } else {
+                ""
+            };
             println!(
                 "[{index}] {}{} | {} Hz / {} ch / {}",
-                device.name, marker, device.default_sample_rate, device.channels, device.sample_format
+                device.name,
+                marker,
+                device.default_sample_rate,
+                device.channels,
+                device.sample_format
             );
         }
         return Ok(());
@@ -145,7 +296,8 @@ async fn main() -> Result<()> {
     options.access_token = credentials.access_token;
     options.resource_id = args.resource_id.trim().to_owned();
     options.ws_url = args.ws_url.trim().to_owned();
-    options.connect_id = (!args.connect_id.trim().is_empty()).then(|| args.connect_id.trim().to_owned());
+    options.connect_id =
+        (!args.connect_id.trim().is_empty()).then(|| args.connect_id.trim().to_owned());
     options.uid = if args.uid.trim().is_empty() {
         format!("uid-{}", &Uuid::new_v4().simple().to_string()[..12])
     } else {
@@ -166,6 +318,32 @@ async fn main() -> Result<()> {
     options.enable_nonstream = args.enable_nonstream;
     options.show_utterances = args.show_utterances;
     options.result_type = args.result_type.trim().to_owned();
+    options.corpus_boosting_table_name = (!args.asr_boosting_table_name.trim().is_empty())
+        .then(|| args.asr_boosting_table_name.trim().to_owned());
+    options.corpus_boosting_table_id = (!args.asr_boosting_table_id.trim().is_empty())
+        .then(|| args.asr_boosting_table_id.trim().to_owned());
+    options.corpus_correct_table_name = (!args.asr_correct_table_name.trim().is_empty())
+        .then(|| args.asr_correct_table_name.trim().to_owned());
+    options.corpus_correct_table_id = (!args.asr_correct_table_id.trim().is_empty())
+        .then(|| args.asr_correct_table_id.trim().to_owned());
+    if !args.asr_corpus_context.trim().is_empty() {
+        options.corpus_context = Some(args.asr_corpus_context.trim().to_owned());
+    } else {
+        let hotwords = args
+            .asr_hotword
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if !hotwords.is_empty() {
+            options.corpus_context = Some(
+                json!({
+                    "hotwords": hotwords.into_iter().map(|word| json!({ "word": word })).collect::<Vec<_>>(),
+                })
+                .to_string(),
+            );
+        }
+    }
     options.timeout_seconds = args.timeout;
     options.final_timeout_seconds = args.final_timeout;
 
@@ -215,9 +393,7 @@ async fn main() -> Result<()> {
                 );
                 println!(
                     "Upload format: {} Hz / {} ch / {}-bit PCM (local capture is converted only if needed)",
-                    mic_options.sample_rate,
-                    mic_options.channels,
-                    mic_options.bits
+                    mic_options.sample_rate, mic_options.channels, mic_options.bits
                 );
             }
             let capture_options = MicrophoneCaptureOptions {
@@ -268,13 +444,18 @@ async fn main() -> Result<()> {
         "logs": result.logs,
     });
 
-    let final_text = json_result["final_text"].as_str().unwrap_or_default().trim();
+    let final_text = json_result["final_text"]
+        .as_str()
+        .unwrap_or_default()
+        .trim();
     if result.got_final {
         println!("ASR Final Text: {final_text}");
     } else if final_text.is_empty() {
         println!("ASR did not return a final result before timeout.");
     } else {
-        println!("ASR did not return a final result before timeout. Latest interim text: {final_text}");
+        println!(
+            "ASR did not return a final result before timeout. Latest interim text: {final_text}"
+        );
     }
     save_result_json(&args.output_json, &json_result)?;
     Ok(())

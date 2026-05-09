@@ -163,6 +163,31 @@ cargo run --bin voice_bridge -- --app-id "your_app_id" --access-token "your_acce
 - Default PTT hold threshold: `250 ms`
 - Default maximum recording duration: `60 s`
 
+## Contextual ASR (hotwords / corpus)
+
+Doubao streaming ASR supports request-time hints for domain words (hotwords) and richer dialog context via `request.corpus`.
+
+This bridge exposes them as optional CLI arguments:
+
+- `--asr-hotword <word>`: repeat to add multiple hotwords (serialized into `corpus.context` as a hotwords JSON string)
+- `--asr-corpus-context <json>`: advanced mode; passes the provided string directly as `corpus.context` (when set, `--asr-hotword` is ignored)
+- `--asr-boosting-table-id` / `--asr-boosting-table-name`: reference a hotword table configured in the Doubao self-learning platform
+- `--asr-correct-table-id` / `--asr-correct-table-name`: reference a replacement table configured in the self-learning platform
+
+Example: a few hotwords:
+
+```powershell
+cargo run --bin voice_bridge -- --asr-hotword "希沃白板" --asr-hotword "OfficePLUS"
+```
+
+Example: pass a full `corpus.context` JSON payload:
+
+```bash
+cargo run --bin voice_bridge -- --asr-corpus-context '{"hotwords":[{"word":"希沃白板"}]}'
+```
+
+The `corpus.context` value is sent to the ASR service with each utterance. Avoid including sensitive text in the context payload.
+
 ## Release helpers
 
 Windows:

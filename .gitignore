@@ -1,5 +1,5 @@
 target/
-doubao_credentials.json
+doubao_credentials.json*
 *.log
 *.zip
 packaging/release/

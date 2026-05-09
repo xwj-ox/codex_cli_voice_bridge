@@ -9,15 +9,15 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 use crate::audio::{CaptureEvent, MicrophoneCaptureOptions, start_microphone_capture};
 use crate::protocol::{
-    DEFAULT_RESOURCE_ID, DEFAULT_WS_URL, MSG_TYPE_ERROR_RESPONSE, ParsedFrame,
-    RequestAudioOptions, RequestRuntimeOptions, build_audio_request, build_full_client_request,
-    build_full_payload, extract_text, frame_to_json_value, is_final_frame, parse_response_frame,
+    DEFAULT_RESOURCE_ID, DEFAULT_WS_URL, MSG_TYPE_ERROR_RESPONSE, ParsedFrame, RequestAudioOptions,
+    RequestRuntimeOptions, build_audio_request, build_full_client_request, build_full_payload,
+    extract_text, frame_to_json_value, is_final_frame, parse_response_frame,
 };
 
 static TLS_PROVIDER_INIT: OnceLock<Result<(), String>> = OnceLock::new();
@@ -45,6 +45,12 @@ pub struct SessionOptions {
     pub enable_nonstream: bool,
     pub show_utterances: bool,
     pub result_type: String,
+    pub corpus_boosting_table_name: Option<String>,
+    pub corpus_boosting_table_id: Option<String>,
+    pub corpus_correct_table_name: Option<String>,
+    pub corpus_correct_table_id: Option<String>,
+    /// Doubao expects a JSON string, e.g. `{"hotwords":[{"word":"foo"}]}` or a dialog context payload.
+    pub corpus_context: Option<String>,
     pub timeout_seconds: f64,
     pub final_timeout_seconds: f64,
 }
@@ -73,6 +79,11 @@ impl Default for SessionOptions {
             enable_nonstream: false,
             show_utterances: true,
             result_type: "full".to_owned(),
+            corpus_boosting_table_name: None,
+            corpus_boosting_table_id: None,
+            corpus_correct_table_name: None,
+            corpus_correct_table_id: None,
+            corpus_context: None,
             timeout_seconds: 10.0,
             final_timeout_seconds: 15.0,
         }
@@ -163,7 +174,10 @@ fn ensure_tls_provider() -> Result<()> {
     }
 }
 
-fn build_websocket_request(options: &SessionOptions, connect_id: &str) -> Result<http::Request<()>> {
+fn build_websocket_request(
+    options: &SessionOptions,
+    connect_id: &str,
+) -> Result<http::Request<()>> {
     let mut request = options
         .ws_url
         .as_str()
@@ -244,6 +258,11 @@ where
         enable_nonstream: options.enable_nonstream,
         show_utterances: options.show_utterances,
         result_type: options.result_type.clone(),
+        corpus_boosting_table_name: options.corpus_boosting_table_name.clone(),
+        corpus_boosting_table_id: options.corpus_boosting_table_id.clone(),
+        corpus_correct_table_name: options.corpus_correct_table_name.clone(),
+        corpus_correct_table_id: options.corpus_correct_table_id.clone(),
+        corpus_context: options.corpus_context.clone(),
     };
     let payload = build_full_payload(&audio, &runtime);
     ws.send(Message::Binary(build_full_client_request(&payload)?.into()))
@@ -442,6 +461,11 @@ where
         enable_nonstream: mic_options.enable_nonstream,
         show_utterances: mic_options.show_utterances,
         result_type: mic_options.result_type.clone(),
+        corpus_boosting_table_name: mic_options.corpus_boosting_table_name.clone(),
+        corpus_boosting_table_id: mic_options.corpus_boosting_table_id.clone(),
+        corpus_correct_table_name: mic_options.corpus_correct_table_name.clone(),
+        corpus_correct_table_id: mic_options.corpus_correct_table_id.clone(),
+        corpus_context: mic_options.corpus_context.clone(),
     };
     let payload = build_full_payload(&audio, &runtime);
     ws.send(Message::Binary(build_full_client_request(&payload)?.into()))
@@ -490,7 +514,8 @@ where
                 sent_chunk_count += 1;
 
                 loop {
-                    let Some(frame) = recv_one_frame(&mut ws, Duration::from_millis(50)).await? else {
+                    let Some(frame) = recv_one_frame(&mut ws, Duration::from_millis(50)).await?
+                    else {
                         break;
                     };
                     logs.push(frame_to_json_value(&frame));

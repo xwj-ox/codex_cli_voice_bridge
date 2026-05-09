@@ -37,7 +37,7 @@ pub async fn run_bridge_loop(
     let mut preview = PreviewPrinter::new(config.preview_mode);
     let mut utterance_index = 0usize;
 
-    print_startup_banner(config);
+    print_startup_banner(config, session_options);
 
     loop {
         tokio::select! {
@@ -186,7 +186,7 @@ pub async fn run_bridge_loop(
     Ok(())
 }
 
-fn print_startup_banner(config: &BridgeRuntimeConfig) {
+fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionOptions) {
     let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
     let uses_caps_lock_ptt = ptt_key_uses_caps_lock(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
@@ -225,6 +225,67 @@ fn print_startup_banner(config: &BridgeRuntimeConfig) {
         "[BRIDGE] upload format: {} Hz / {} ch / {}-bit PCM (local capture is converted only if needed)",
         config.upload_sample_rate, config.upload_channels, config.upload_bits
     );
+    if session_options
+        .corpus_boosting_table_name
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || session_options
+            .corpus_boosting_table_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        || session_options
+            .corpus_correct_table_name
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        || session_options
+            .corpus_correct_table_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        || session_options
+            .corpus_context
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        println!("[BRIDGE] contextual ASR: corpus hints are enabled.");
+        if session_options
+            .corpus_boosting_table_name
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            println!("[BRIDGE] contextual ASR: boosting_table_name is set.");
+        }
+        if session_options
+            .corpus_boosting_table_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            println!("[BRIDGE] contextual ASR: boosting_table_id is set.");
+        }
+        if session_options
+            .corpus_correct_table_name
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            println!("[BRIDGE] contextual ASR: correct_table_name is set.");
+        }
+        if session_options
+            .corpus_correct_table_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            println!("[BRIDGE] contextual ASR: correct_table_id is set.");
+        }
+        if let Some(value) = session_options
+            .corpus_context
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            println!(
+                "[BRIDGE] contextual ASR: corpus.context is set ({} bytes).",
+                value.len()
+            );
+        }
+    }
     if !config.require_title.trim().is_empty() {
         println!(
             "[BRIDGE] Window title must contain: {}",

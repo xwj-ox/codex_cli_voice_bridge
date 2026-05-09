@@ -50,6 +50,12 @@ pub struct RequestRuntimeOptions {
     pub enable_nonstream: bool,
     pub show_utterances: bool,
     pub result_type: String,
+    pub corpus_boosting_table_name: Option<String>,
+    pub corpus_boosting_table_id: Option<String>,
+    pub corpus_correct_table_name: Option<String>,
+    pub corpus_correct_table_id: Option<String>,
+    /// Doubao expects a JSON string, e.g. `{"hotwords":[{"word":"foo"}]}` or a dialog context payload.
+    pub corpus_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,22 +103,78 @@ pub fn build_full_payload(audio: &RequestAudioOptions, request: &RequestRuntimeO
     audio_obj.insert("rate".to_owned(), json!(audio.sample_rate));
     audio_obj.insert("bits".to_owned(), json!(audio.bits));
     audio_obj.insert("channel".to_owned(), json!(audio.channels));
-    if let Some(language) = audio.language.as_ref().filter(|value| !value.trim().is_empty()) {
+    if let Some(language) = audio
+        .language
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
         audio_obj.insert("language".to_owned(), json!(language));
+    }
+
+    let mut request_obj = Map::new();
+    request_obj.insert(
+        "model_name".to_owned(),
+        json!(if request.model_name.trim().is_empty() {
+            "bigmodel"
+        } else {
+            &request.model_name
+        }),
+    );
+    request_obj.insert("enable_itn".to_owned(), json!(request.enable_itn));
+    request_obj.insert("enable_punc".to_owned(), json!(request.enable_punc));
+    request_obj.insert("enable_ddc".to_owned(), json!(request.enable_ddc));
+    request_obj.insert(
+        "enable_nonstream".to_owned(),
+        json!(request.enable_nonstream),
+    );
+    request_obj.insert("show_utterances".to_owned(), json!(request.show_utterances));
+    request_obj.insert("result_type".to_owned(), json!(request.result_type));
+
+    let mut corpus_obj = Map::new();
+    if let Some(value) = request
+        .corpus_boosting_table_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        corpus_obj.insert("boosting_table_name".to_owned(), json!(value));
+    }
+    if let Some(value) = request
+        .corpus_boosting_table_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        corpus_obj.insert("boosting_table_id".to_owned(), json!(value));
+    }
+    if let Some(value) = request
+        .corpus_correct_table_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        corpus_obj.insert("correct_table_name".to_owned(), json!(value));
+    }
+    if let Some(value) = request
+        .corpus_correct_table_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        corpus_obj.insert("correct_table_id".to_owned(), json!(value));
+    }
+    if let Some(value) = request
+        .corpus_context
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        // Doubao's "corpus.context" is defined as a string containing JSON.
+        corpus_obj.insert("context".to_owned(), json!(value));
+    }
+    if !corpus_obj.is_empty() {
+        request_obj.insert("corpus".to_owned(), Value::Object(corpus_obj));
     }
 
     json!({
         "user": { "uid": request.uid },
         "audio": Value::Object(audio_obj),
-        "request": {
-            "model_name": if request.model_name.trim().is_empty() { "bigmodel" } else { &request.model_name },
-            "enable_itn": request.enable_itn,
-            "enable_punc": request.enable_punc,
-            "enable_ddc": request.enable_ddc,
-            "enable_nonstream": request.enable_nonstream,
-            "show_utterances": request.show_utterances,
-            "result_type": request.result_type
-        }
+        "request": Value::Object(request_obj),
     })
 }
 

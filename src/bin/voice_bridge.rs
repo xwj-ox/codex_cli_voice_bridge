@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use serde_json::json;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -16,11 +17,9 @@ const MIC_UPLOAD_BITS: u16 = 16;
 const MIC_UPLOAD_CHANNELS: u16 = 1;
 const DEFAULT_PTT_KEY: &str = "capslock";
 #[cfg(target_os = "macos")]
-const PTT_KEY_HELP: &str =
-    "PTT key: space, enter, capslock, fn, left-win, right-control, right-shift, f1-f12, or a single letter";
+const PTT_KEY_HELP: &str = "PTT key: space, enter, capslock, fn, left-win, right-control, right-shift, f1-f12, or a single letter";
 #[cfg(not(target_os = "macos"))]
-const PTT_KEY_HELP: &str =
-    "PTT key: space, enter, capslock, left-win, right-control, right-shift, f1-f12, or a single letter";
+const PTT_KEY_HELP: &str = "PTT key: space, enter, capslock, left-win, right-control, right-shift, f1-f12, or a single letter";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -30,51 +29,162 @@ const PTT_KEY_HELP: &str =
     next_line_help = true
 )]
 struct Args {
-    #[arg(long, default_value = "", help = "Doubao app_id; falls back to the credentials file when omitted")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao app_id; falls back to the credentials file when omitted"
+    )]
     app_id: String,
-    #[arg(long, default_value = "", help = "Doubao access_token; falls back to the credentials file when omitted")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao access_token; falls back to the credentials file when omitted"
+    )]
     access_token: String,
     #[arg(long, default_value = DEFAULT_RESOURCE_ID, help = "Doubao ASR resource_id; docs list volc.bigasr.sauc.duration/concurrent for 1.0 and volc.seedasr.sauc.duration/concurrent for 2.0")]
     resource_id: String,
     #[arg(long, default_value = DEFAULT_WS_URL, help = "Doubao WebSocket URL; default is the optimized bidirectional endpoint /api/v3/sauc/bigmodel_async")]
     ws_url: String,
-    #[arg(long, default_value = "", help = "Path to doubao_credentials.json; defaults to the current working directory")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Path to doubao_credentials.json; defaults to the current working directory"
+    )]
     credentials: String,
-    #[arg(long, default_value_t = 16000, help = "Reserved compatibility option; upload sample rate is fixed to 16000 Hz")]
+    #[arg(
+        long,
+        default_value_t = 16000,
+        help = "Reserved compatibility option; upload sample rate is fixed to 16000 Hz"
+    )]
     sample_rate: u32,
-    #[arg(long, default_value_t = 16, help = "Reserved compatibility option; upload bit depth is fixed to 16-bit PCM")]
+    #[arg(
+        long,
+        default_value_t = 16,
+        help = "Reserved compatibility option; upload bit depth is fixed to 16-bit PCM"
+    )]
     bits: u16,
-    #[arg(long, default_value_t = 1, help = "Reserved compatibility option; upload channel count is fixed to mono")]
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "Reserved compatibility option; upload channel count is fixed to mono"
+    )]
     channels: u16,
-    #[arg(long, default_value = "", help = "Optional language hint; official docs say it is only supported by bigmodel_nostream and not by the second-pass recognition path")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Optional language hint; official docs say it is only supported by bigmodel_nostream and not by the second-pass recognition path"
+    )]
     language: String,
-    #[arg(long, default_value_t = 60.0, help = "Maximum duration in seconds for one push-to-talk recording")]
+    #[arg(
+        long,
+        default_value_t = 60.0,
+        help = "Maximum duration in seconds for one push-to-talk recording"
+    )]
     mic_duration: f32,
-    #[arg(long, default_value = "", help = "Microphone selector: device index or a case-insensitive name substring")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Microphone selector: device index or a case-insensitive name substring"
+    )]
     mic_device: String,
     #[arg(long, help = "List available input devices and exit")]
     mic_list_devices: bool,
-    #[arg(long, default_value_t = 200, help = "Audio chunk size before upload; official docs recommend about 100-200 ms, and 200 ms is preferred for bigmodel_async")]
+    #[arg(
+        long,
+        default_value_t = 200,
+        help = "Audio chunk size before upload; official docs recommend about 100-200 ms, and 200 ms is preferred for bigmodel_async"
+    )]
     chunk_ms: u32,
-    #[arg(long, default_value_t = 0, help = "Optional fixed chunk size in bytes; 0 means derive from chunk_ms")]
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Optional fixed chunk size in bytes; 0 means derive from chunk_ms"
+    )]
     chunk_bytes: usize,
     #[arg(long, default_value = "bigmodel", help = "Doubao ASR model name")]
     model_name: String,
-    #[arg(long, default_value_t = true, help = "Enable ITN text normalization, e.g. turning spoken numerals into written forms like year 1970 or amount $123")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable ITN text normalization, e.g. turning spoken numerals into written forms like year 1970 or amount $123"
+    )]
     enable_itn: bool,
-    #[arg(long, default_value_t = true, help = "Enable punctuation insertion; official docs say this defaults to true")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable punctuation insertion; official docs say this defaults to true"
+    )]
     enable_punc: bool,
-    #[arg(long, default_value_t = false, help = "Enable semantic smoothing (DDC, likely Disfluency Detection and Correction), which removes fillers, hesitations, and repeated words to improve readability; official docs say this defaults to false")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Enable semantic smoothing (DDC, likely Disfluency Detection and Correction), which removes fillers, hesitations, and repeated words to improve readability; official docs say this defaults to false"
+    )]
     enable_ddc: bool,
-    #[arg(long, default_value_t = true, help = "Enable second-pass recognition: on the optimized bidirectional API, each finalized VAD segment is re-recognized with the nostream model to improve final accuracy")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable second-pass recognition: on the optimized bidirectional API, each finalized VAD segment is re-recognized with the nostream model to improve final accuracy"
+    )]
     enable_nonstream: bool,
-    #[arg(long, default_value_t = true, help = "Return utterance-level segmentation details such as pauses, sentence splits, and word information")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Return utterance-level segmentation details such as pauses, sentence splits, and word information"
+    )]
     show_utterances: bool,
-    #[arg(long, default_value = "full", help = "Result return mode: full returns all utterances each time; single returns only the current utterance and is intended to be used with show_utterances=true")]
+    #[arg(
+        long,
+        default_value = "full",
+        help = "Result return mode: full returns all utterances each time; single returns only the current utterance and is intended to be used with show_utterances=true"
+    )]
     result_type: String,
-    #[arg(long, default_value_t = 10.0, help = "Handshake and per-frame timeout in seconds")]
+    #[arg(
+        long,
+        help = "Contextual ASR hotword; repeat to add multiple words (sets request.corpus.context as a hotwords JSON string)"
+    )]
+    asr_hotword: Vec<String>,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Raw request.corpus.context string (a JSON string payload); when set, --asr-hotword is ignored"
+    )]
+    asr_corpus_context: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning hotword table name (request.corpus.boosting_table_name)"
+    )]
+    asr_boosting_table_name: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning hotword table id (request.corpus.boosting_table_id)"
+    )]
+    asr_boosting_table_id: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning replacement table name (request.corpus.correct_table_name)"
+    )]
+    asr_correct_table_name: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Doubao self-learning replacement table id (request.corpus.correct_table_id)"
+    )]
+    asr_correct_table_id: String,
+    #[arg(
+        long,
+        default_value_t = 10.0,
+        help = "Handshake and per-frame timeout in seconds"
+    )]
     timeout: f64,
-    #[arg(long, default_value_t = 15.0, help = "Final result wait timeout in seconds after audio upload finishes")]
+    #[arg(
+        long,
+        default_value_t = 15.0,
+        help = "Final result wait timeout in seconds after audio upload finishes"
+    )]
     final_timeout: f64,
     #[arg(
         long,
@@ -82,15 +192,31 @@ struct Args {
         help = PTT_KEY_HELP
     )]
     ptt_key: String,
-    #[arg(long, default_value_t = 250, help = "Hold duration in milliseconds before the PTT key starts recording")]
+    #[arg(
+        long,
+        default_value_t = 250,
+        help = "Hold duration in milliseconds before the PTT key starts recording"
+    )]
     ptt_hold_ms: u64,
-    #[arg(long, default_value_t = true, help = "Replay a short tap of the PTT key as a normal key press")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Replay a short tap of the PTT key as a normal key press"
+    )]
     ptt_short_press_passthrough: bool,
     #[arg(long, value_enum, default_value_t = PreviewMode::Single, help = "Preview mode for interim recognition text")]
     preview_mode: PreviewMode,
-    #[arg(long, default_value_t = false, help = "Press Enter after pasting the final text")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Press Enter after pasting the final text"
+    )]
     submit: bool,
-    #[arg(long, default_value_t = 90, help = "Delay in milliseconds before pasting after refocusing the target window")]
+    #[arg(
+        long,
+        default_value_t = 90,
+        help = "Delay in milliseconds before pasting after refocusing the target window"
+    )]
     paste_delay_ms: u64,
     #[arg(
         long,
@@ -98,11 +224,23 @@ struct Args {
         help = "Disallow using the bridge host window as the paste target"
     )]
     forbid_host_window_target: bool,
-    #[arg(long, default_value = "", help = "Only allow target windows whose title contains this substring")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Only allow target windows whose title contains this substring"
+    )]
     require_title: String,
-    #[arg(long, default_value_t = true, help = "Play cue beeps for listen / recognized / error states")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Play cue beeps for listen / recognized / error states"
+    )]
     cue_sounds: bool,
-    #[arg(long, default_value = "", help = "Write per-utterance JSON results to this base path; empty disables file output")]
+    #[arg(
+        long,
+        default_value = "",
+        help = "Write per-utterance JSON results to this base path; empty disables file output"
+    )]
     output_json: String,
 }
 
@@ -129,6 +267,32 @@ fn build_session_options(args: &Args, app_id: String, access_token: String) -> S
     options.enable_nonstream = args.enable_nonstream;
     options.show_utterances = args.show_utterances;
     options.result_type = args.result_type.trim().to_owned();
+    options.corpus_boosting_table_name = (!args.asr_boosting_table_name.trim().is_empty())
+        .then(|| args.asr_boosting_table_name.trim().to_owned());
+    options.corpus_boosting_table_id = (!args.asr_boosting_table_id.trim().is_empty())
+        .then(|| args.asr_boosting_table_id.trim().to_owned());
+    options.corpus_correct_table_name = (!args.asr_correct_table_name.trim().is_empty())
+        .then(|| args.asr_correct_table_name.trim().to_owned());
+    options.corpus_correct_table_id = (!args.asr_correct_table_id.trim().is_empty())
+        .then(|| args.asr_correct_table_id.trim().to_owned());
+    if !args.asr_corpus_context.trim().is_empty() {
+        options.corpus_context = Some(args.asr_corpus_context.trim().to_owned());
+    } else {
+        let hotwords = args
+            .asr_hotword
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if !hotwords.is_empty() {
+            options.corpus_context = Some(
+                json!({
+                    "hotwords": hotwords.into_iter().map(|word| json!({ "word": word })).collect::<Vec<_>>(),
+                })
+                .to_string(),
+            );
+        }
+    }
     options.timeout_seconds = args.timeout;
     options.final_timeout_seconds = args.final_timeout;
     options
@@ -145,10 +309,19 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         for device in devices {
-            let marker = if device.is_default_input { " (default)" } else { "" };
+            let marker = if device.is_default_input {
+                " (default)"
+            } else {
+                ""
+            };
             println!(
                 "[{}] {}{} | {} Hz / {} ch / {}",
-                device.index, device.name, marker, device.default_sample_rate, device.channels, device.sample_format
+                device.index,
+                device.name,
+                marker,
+                device.default_sample_rate,
+                device.channels,
+                device.sample_format
             );
         }
         return Ok(());
@@ -164,7 +337,11 @@ async fn main() -> Result<()> {
         Some(&args.access_token),
         &credentials_path,
     )?;
-    let options = build_session_options(&args, credentials.app_id.clone(), credentials.access_token.clone());
+    let options = build_session_options(
+        &args,
+        credentials.app_id.clone(),
+        credentials.access_token.clone(),
+    );
     let mut platform = create_platform_services(&PlatformInitOptions {
         ptt_key: args.ptt_key.clone(),
         ptt_hold_ms: args.ptt_hold_ms,
