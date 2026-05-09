@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -27,6 +28,9 @@ pub struct BridgeRuntimeConfig {
     pub upload_sample_rate: u32,
     pub upload_channels: u16,
     pub upload_bits: u16,
+    pub asr_auto_context: bool,
+    pub asr_auto_context_max_items: usize,
+    pub asr_auto_context_max_bytes: usize,
 }
 
 pub async fn run_bridge_loop(
@@ -38,6 +42,11 @@ pub async fn run_bridge_loop(
     let mut utterance_index = 0usize;
 
     print_startup_banner(config, session_options);
+    let mut auto_context = AutoDialogContext::new(
+        config.asr_auto_context,
+        config.asr_auto_context_max_items,
+        config.asr_auto_context_max_bytes,
+    );
 
     loop {
         tokio::select! {
@@ -77,6 +86,14 @@ pub async fn run_bridge_loop(
                 play_cue_if_enabled(config, &*platform.cue_player, CueKind::Listen);
                 preview.reset();
 
+                let mut utterance_session_options = session_options.clone();
+                if let Some(context) = auto_context.build_context() {
+                    utterance_session_options.corpus_context = Some(context);
+                } else if config.asr_auto_context {
+                    // Explicitly clear corpus.context so static hotwords do not accidentally stick around.
+                    utterance_session_options.corpus_context = None;
+                }
+
                 let capture_options = MicrophoneCaptureOptions {
                     duration_seconds: config.mic_duration,
                     device_selector: config.mic_device.clone(),
@@ -87,7 +104,7 @@ pub async fn run_bridge_loop(
                     target_channels: config.upload_channels,
                 };
 
-                let session_result = run_mic_session(session_options, &capture_options, |text, is_final| {
+                let session_result = run_mic_session(&utterance_session_options, &capture_options, |text, is_final| {
                     preview.show(text, is_final);
                 }).await;
 
@@ -148,6 +165,7 @@ pub async fn run_bridge_loop(
                             continue;
                         }
 
+                        auto_context.ingest_final_text(&final_text);
                         println!("[BRIDGE] final text #{}: {}", utterance_index, final_text);
                         play_cue_if_enabled(config, &*platform.cue_player, CueKind::Recognized);
                         if !target_is_usable {
@@ -225,6 +243,13 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionO
         "[BRIDGE] upload format: {} Hz / {} ch / {}-bit PCM (local capture is converted only if needed)",
         config.upload_sample_rate, config.upload_channels, config.upload_bits
     );
+    if config.asr_auto_context {
+        println!(
+            "[BRIDGE] contextual ASR: auto dialog context is ON (max_items={}, max_bytes={}).",
+            config.asr_auto_context_max_items, config.asr_auto_context_max_bytes
+        );
+        println!("[BRIDGE] contextual ASR: recent final texts will be sent as corpus.context for future utterances.");
+    }
     if session_options
         .corpus_boosting_table_name
         .as_deref()
@@ -280,6 +305,9 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionO
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
+            if config.asr_auto_context {
+                println!("[BRIDGE] contextual ASR: note: static corpus.context will be ignored while auto dialog context is enabled.");
+            }
             println!(
                 "[BRIDGE] contextual ASR: corpus.context is set ({} bytes).",
                 value.len()
@@ -317,6 +345,70 @@ fn play_cue_if_enabled(
 ) {
     if config.cue_sounds {
         cue_player.play(cue);
+    }
+}
+
+struct AutoDialogContext {
+    enabled: bool,
+    max_items: usize,
+    max_bytes: usize,
+    // Stored newest-first to match the API guidance (new -> old).
+    items_newest_first: VecDeque<String>,
+}
+
+impl AutoDialogContext {
+    fn new(enabled: bool, max_items: usize, max_bytes: usize) -> Self {
+        Self {
+            enabled,
+            max_items: max_items.max(1),
+            max_bytes,
+            items_newest_first: VecDeque::new(),
+        }
+    }
+
+    fn ingest_final_text(&mut self, text: &str) {
+        if !self.enabled {
+            return;
+        }
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        if self
+            .items_newest_first
+            .front()
+            .is_some_and(|latest| latest == trimmed)
+        {
+            return;
+        }
+
+        self.items_newest_first.push_front(trimmed.to_owned());
+        while self.items_newest_first.len() > self.max_items {
+            self.items_newest_first.pop_back();
+        }
+    }
+
+    fn build_context(&self) -> Option<String> {
+        if !self.enabled || self.items_newest_first.is_empty() {
+            return None;
+        }
+
+        let mut items: Vec<String> = self.items_newest_first.iter().cloned().collect();
+        loop {
+            let context = json!({
+                "context_type": "dialog_ctx",
+                "context_data": items.iter().map(|text| json!({ "text": text })).collect::<Vec<_>>(),
+            })
+            .to_string();
+
+            if self.max_bytes > 0 && context.len() > self.max_bytes && items.len() > 1 {
+                items.pop(); // drop the oldest entry
+                continue;
+            }
+
+            return Some(context);
+        }
     }
 }
 

@@ -173,6 +173,7 @@ This bridge exposes them as optional CLI arguments:
 - `--asr-corpus-context <json>`: advanced mode; passes the provided string directly as `corpus.context` (when set, `--asr-hotword` is ignored)
 - `--asr-boosting-table-id` / `--asr-boosting-table-name`: reference a hotword table configured in the Doubao self-learning platform
 - `--asr-correct-table-id` / `--asr-correct-table-name`: reference a replacement table configured in the self-learning platform
+- `--asr-auto-context`: maintain a short dialog context across utterances (serialized as a `dialog_ctx` payload in `corpus.context`)
 
 Example: a few hotwords:
 
@@ -187,6 +188,8 @@ cargo run --bin voice_bridge -- --asr-corpus-context '{"hotwords":[{"word":"å¸Œæ
 ```
 
 The `corpus.context` value is sent to the ASR service with each utterance. Avoid including sensitive text in the context payload.
+
+When `--asr-auto-context` is enabled, the bridge also sends recent final recognition texts as the dialog context for future utterances. This can improve recognition continuity, but it also means prior dictation text is sent along with each new utterance.
 
 ## Release helpers
 

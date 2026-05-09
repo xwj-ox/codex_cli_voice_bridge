@@ -176,6 +176,24 @@ struct Args {
     asr_correct_table_id: String,
     #[arg(
         long,
+        default_value_t = false,
+        help = "Enable automatic dialog context across utterances (request.corpus.context dialog_ctx)"
+    )]
+    asr_auto_context: bool,
+    #[arg(
+        long,
+        default_value_t = 8,
+        help = "Max dialog context items to keep (newest first; API supports up to 20 rounds)"
+    )]
+    asr_auto_context_max_items: usize,
+    #[arg(
+        long,
+        default_value_t = 4096,
+        help = "Max UTF-8 bytes for the generated corpus.context JSON string (older items are dropped first)"
+    )]
+    asr_auto_context_max_bytes: usize,
+    #[arg(
+        long,
         default_value_t = 10.0,
         help = "Handshake and per-frame timeout in seconds"
     )]
@@ -366,6 +384,9 @@ async fn main() -> Result<()> {
         upload_sample_rate: MIC_UPLOAD_SAMPLE_RATE,
         upload_channels: MIC_UPLOAD_CHANNELS,
         upload_bits: MIC_UPLOAD_BITS,
+        asr_auto_context: args.asr_auto_context,
+        asr_auto_context_max_items: args.asr_auto_context_max_items,
+        asr_auto_context_max_bytes: args.asr_auto_context_max_bytes,
     };
 
     run_bridge_loop(&runtime, &options, &mut platform).await
