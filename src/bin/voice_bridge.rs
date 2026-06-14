@@ -1,13 +1,19 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde_json::json;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 use codex_cli_voice_bridge_rust::asr::SessionOptions;
 use codex_cli_voice_bridge_rust::audio::list_input_devices;
-use codex_cli_voice_bridge_rust::bridge_core::{BridgeRuntimeConfig, run_bridge_loop};
-use codex_cli_voice_bridge_rust::config::{default_credentials_path, resolve_credentials};
+use codex_cli_voice_bridge_rust::bridge_core::{
+    BridgeAsrProvider, BridgeRuntimeConfig, run_bridge_loop,
+};
+use codex_cli_voice_bridge_rust::config::{
+    default_credentials_path, default_mai_credentials_path, resolve_credentials,
+    resolve_mai_credentials,
+};
+use codex_cli_voice_bridge_rust::mai::{DEFAULT_MAI_API_VERSION, DEFAULT_MAI_MODEL, MaiOptions};
 use codex_cli_voice_bridge_rust::platform::{PlatformInitOptions, create_platform_services};
 use codex_cli_voice_bridge_rust::preview::PreviewMode;
 use codex_cli_voice_bridge_rust::protocol::{DEFAULT_RESOURCE_ID, DEFAULT_WS_URL};
@@ -21,14 +27,22 @@ const PTT_KEY_HELP: &str = "PTT key: space, enter, capslock, fn, left-win, right
 #[cfg(not(target_os = "macos"))]
 const PTT_KEY_HELP: &str = "PTT key: space, enter, capslock, left-win, right-control, right-shift, f1-f12, or a single letter";
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AsrProvider {
+    Doubao,
+    Mai,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "voice_bridge",
-    about = "Push-to-talk Doubao ASR bridge",
-    long_about = "Capture one utterance with a push-to-talk key, send it to Doubao ASR, and paste the final text back into the foreground window.",
+    about = "Push-to-talk ASR bridge",
+    long_about = "Capture one utterance with a push-to-talk key, send it to the selected ASR provider, and paste the final text back into the foreground window.",
     next_line_help = true
 )]
 struct Args {
+    #[arg(long, value_enum, default_value_t = AsrProvider::Doubao, help = "ASR provider: doubao or mai")]
+    asr_provider: AsrProvider,
     #[arg(
         long,
         default_value = "",
@@ -51,6 +65,50 @@ struct Args {
         help = "Path to doubao_credentials.json; defaults to the current working directory"
     )]
     credentials: String,
+    #[arg(long, default_value = "", help = "Azure Speech endpoint for MAI")]
+    mai_endpoint: String,
+    #[arg(long, default_value = "", help = "Azure Speech key for MAI")]
+    mai_key: String,
+    #[arg(
+        long,
+        default_value = "",
+        help = "Path to mai_credentials.json; defaults to the current working directory"
+    )]
+    mai_credentials: String,
+    #[arg(long, default_value = DEFAULT_MAI_API_VERSION, help = "Azure Speech API version for MAI")]
+    mai_api_version: String,
+    #[arg(long, default_value = DEFAULT_MAI_MODEL, help = "MAI model: mai-transcribe-1 or mai-transcribe-1.5")]
+    mai_model: String,
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "zh",
+        help = "MAI locale hint; repeat or comma-separate values"
+    )]
+    mai_locale: Vec<String>,
+    #[arg(
+        long,
+        default_value = "default",
+        help = "MAI style: default or verbatim"
+    )]
+    mai_style: String,
+    #[arg(
+        long,
+        help = "MAI 1.5 phrase list entry; repeat to add multiple phrases"
+    )]
+    mai_phrase: Vec<String>,
+    #[arg(
+        long,
+        default_value_t = 600.0,
+        help = "MAI HTTP request timeout in seconds"
+    )]
+    mai_timeout: f64,
+    #[arg(
+        long,
+        default_value_t = 4,
+        help = "MAI retry count for 429 and transient 5xx responses"
+    )]
+    mai_max_retries: usize,
     #[arg(
         long,
         default_value_t = 16000,
@@ -316,6 +374,25 @@ fn build_session_options(args: &Args, app_id: String, access_token: String) -> S
     options
 }
 
+fn build_mai_options(args: &Args, endpoint: String, key: String) -> MaiOptions {
+    MaiOptions {
+        endpoint,
+        key,
+        api_version: args.mai_api_version.trim().to_owned(),
+        model: args.mai_model.trim().to_owned(),
+        locales: args.mai_locale.clone(),
+        style: args.mai_style.trim().to_owned(),
+        phrases: args
+            .mai_phrase
+            .iter()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .collect(),
+        timeout_seconds: args.mai_timeout,
+        max_retries: args.mai_max_retries,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -345,21 +422,42 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let credentials_path = if args.credentials.trim().is_empty() {
-        default_credentials_path()
-    } else {
-        PathBuf::from(args.credentials.trim())
+    let asr_provider = match args.asr_provider {
+        AsrProvider::Doubao => {
+            let credentials_path = if args.credentials.trim().is_empty() {
+                default_credentials_path()
+            } else {
+                PathBuf::from(args.credentials.trim())
+            };
+            let credentials = resolve_credentials(
+                Some(&args.app_id),
+                Some(&args.access_token),
+                &credentials_path,
+            )?;
+            BridgeAsrProvider::Doubao(build_session_options(
+                &args,
+                credentials.app_id.clone(),
+                credentials.access_token.clone(),
+            ))
+        }
+        AsrProvider::Mai => {
+            let credentials_path = if args.mai_credentials.trim().is_empty() {
+                default_mai_credentials_path()
+            } else {
+                PathBuf::from(args.mai_credentials.trim())
+            };
+            let credentials = resolve_mai_credentials(
+                Some(&args.mai_endpoint),
+                Some(&args.mai_key),
+                &credentials_path,
+            )?;
+            BridgeAsrProvider::Mai(build_mai_options(
+                &args,
+                credentials.endpoint,
+                credentials.key,
+            ))
+        }
     };
-    let credentials = resolve_credentials(
-        Some(&args.app_id),
-        Some(&args.access_token),
-        &credentials_path,
-    )?;
-    let options = build_session_options(
-        &args,
-        credentials.app_id.clone(),
-        credentials.access_token.clone(),
-    );
     let mut platform = create_platform_services(&PlatformInitOptions {
         ptt_key: args.ptt_key.clone(),
         ptt_hold_ms: args.ptt_hold_ms,
@@ -389,5 +487,5 @@ async fn main() -> Result<()> {
         asr_auto_context_max_bytes: args.asr_auto_context_max_bytes,
     };
 
-    run_bridge_loop(&runtime, &options, &mut platform).await
+    run_bridge_loop(&runtime, &asr_provider, &mut platform).await
 }
