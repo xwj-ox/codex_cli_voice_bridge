@@ -27,6 +27,7 @@ cp "${RELEASE_BIN_DIR}/voice_bridge_doctor" "${OUTPUT_DIR}/voice_bridge_doctor"
 cp "${PROJECT_ROOT}/doubao_credentials.example.json" "${OUTPUT_DIR}/doubao_credentials.example.json"
 cp "${PROJECT_ROOT}/mai_credentials.example.json" "${OUTPUT_DIR}/mai_credentials.example.json"
 cp "${PROJECT_ROOT}/packaging/README_macos_release.md" "${OUTPUT_DIR}/README_macos_release.md"
+cp -R "${PROJECT_ROOT}/docs" "${OUTPUT_DIR}/docs"
 
 cat > "${OUTPUT_DIR}/doubao_credentials.json" <<'EOF'
 {

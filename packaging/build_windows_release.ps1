@@ -42,6 +42,8 @@ foreach ($file in $templateFiles) {
     Copy-Item -Path $file.Source -Destination (Join-Path $outputDir $file.Target) -Force
 }
 
+Copy-Item -Path (Join-Path $projectRoot "docs") -Destination (Join-Path $outputDir "docs") -Recurse -Force
+
 $blankCredentials = @'
 {
   "app_id": "",

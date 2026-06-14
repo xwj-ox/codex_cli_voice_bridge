@@ -23,8 +23,8 @@ enum InputSource {
 #[derive(Debug, Parser)]
 #[command(
     name = "mai_demo",
-    about = "Azure MAI demo",
-    long_about = "Run Azure MAI against an audio file or a fixed-duration microphone capture, then print or save the recognition result.",
+    about = "MAI demo",
+    long_about = "Run MAI against an audio file or a fixed-duration microphone capture, then print or save the recognition result.",
     next_line_help = true
 )]
 struct Args {
@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
                 bail!("Audio file is empty: {}", path.display());
             }
             if !args.quiet {
-                println!("Provider: Azure MAI");
+                println!("Provider: MAI");
                 println!("Input source: file");
                 println!("Audio bytes: {}", audio_bytes.len());
                 println!("Model: {}", options.model);
@@ -225,7 +225,7 @@ async fn main() -> Result<()> {
         }
         InputSource::Mic => {
             if !args.quiet {
-                println!("Provider: Azure MAI");
+                println!("Provider: MAI");
                 println!("Input source: mic");
                 println!("Model: {}", options.model);
                 println!(
