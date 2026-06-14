@@ -1,14 +1,46 @@
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::asr::{SessionOptions, run_mic_session};
+use crate::asr::{SessionOptions, run_mic_session as run_doubao_mic_session};
 use crate::audio::MicrophoneCaptureOptions;
+use crate::mai::{MaiOptions, run_mic_session as run_mai_mic_session};
 use crate::platform::{CueKind, PlatformServices, WindowInfo};
 use crate::preview::{PreviewMode, PreviewPrinter};
+
+#[derive(Debug, Clone)]
+pub enum BridgeAsrProvider {
+    Doubao(SessionOptions),
+    Mai(MaiOptions),
+}
+
+impl BridgeAsrProvider {
+    fn name(&self) -> &'static str {
+        match self {
+            BridgeAsrProvider::Doubao(_) => "doubao",
+            BridgeAsrProvider::Mai(_) => "mai",
+        }
+    }
+}
+
+struct BridgeRecognitionResult {
+    provider: &'static str,
+    session_id: String,
+    response_headers: BTreeMap<String, String>,
+    final_text: String,
+    got_final: bool,
+    sent_audio_bytes: usize,
+    sent_chunk_count: usize,
+    capture_source_sample_rate: Option<u32>,
+    capture_source_channels: Option<u16>,
+    capture_sample_format: Option<String>,
+    capture_direct_target_format: Option<bool>,
+    logs: serde_json::Value,
+}
 
 pub struct BridgeRuntimeConfig {
     pub mic_duration: f32,
@@ -35,13 +67,13 @@ pub struct BridgeRuntimeConfig {
 
 pub async fn run_bridge_loop(
     config: &BridgeRuntimeConfig,
-    session_options: &SessionOptions,
+    asr_provider: &BridgeAsrProvider,
     platform: &mut PlatformServices,
 ) -> Result<()> {
     let mut preview = PreviewPrinter::new(config.preview_mode);
     let mut utterance_index = 0usize;
 
-    print_startup_banner(config, session_options);
+    print_startup_banner(config, asr_provider);
     let mut auto_context = AutoDialogContext::new(
         config.asr_auto_context,
         config.asr_auto_context_max_items,
@@ -86,14 +118,6 @@ pub async fn run_bridge_loop(
                 play_cue_if_enabled(config, &*platform.cue_player, CueKind::Listen);
                 preview.reset();
 
-                let mut utterance_session_options = session_options.clone();
-                if let Some(context) = auto_context.build_context() {
-                    utterance_session_options.corpus_context = Some(context);
-                } else if config.asr_auto_context {
-                    // Explicitly clear corpus.context so static hotwords do not accidentally stick around.
-                    utterance_session_options.corpus_context = None;
-                }
-
                 let capture_options = MicrophoneCaptureOptions {
                     duration_seconds: config.mic_duration,
                     device_selector: config.mic_device.clone(),
@@ -104,9 +128,52 @@ pub async fn run_bridge_loop(
                     target_channels: config.upload_channels,
                 };
 
-                let session_result = run_mic_session(&utterance_session_options, &capture_options, |text, is_final| {
-                    preview.show(text, is_final);
-                }).await;
+                let session_result = match asr_provider {
+                    BridgeAsrProvider::Doubao(session_options) => {
+                        let mut utterance_session_options = session_options.clone();
+                        if let Some(context) = auto_context.build_context() {
+                            utterance_session_options.corpus_context = Some(context);
+                        } else if config.asr_auto_context {
+                            // Explicitly clear corpus.context so static hotwords do not accidentally stick around.
+                            utterance_session_options.corpus_context = None;
+                        }
+
+                        run_doubao_mic_session(&utterance_session_options, &capture_options, |text, is_final| {
+                            preview.show(text, is_final);
+                        })
+                        .await
+                        .map(|result| BridgeRecognitionResult {
+                            provider: "doubao",
+                            session_id: result.connect_id,
+                            response_headers: result.handshake_headers,
+                            final_text: result.final_text,
+                            got_final: result.got_final,
+                            sent_audio_bytes: result.sent_audio_bytes,
+                            sent_chunk_count: result.sent_chunk_count,
+                            capture_source_sample_rate: result.capture_source_sample_rate,
+                            capture_source_channels: result.capture_source_channels,
+                            capture_sample_format: result.capture_sample_format,
+                            capture_direct_target_format: result.capture_direct_target_format,
+                            logs: json!(result.logs),
+                        })
+                    }
+                    BridgeAsrProvider::Mai(options) => run_mai_mic_session(options, &capture_options)
+                        .await
+                        .map(|result| BridgeRecognitionResult {
+                            provider: "mai",
+                            session_id: result.request_id.unwrap_or_default(),
+                            response_headers: result.response_headers,
+                            final_text: result.final_text,
+                            got_final: result.got_final,
+                            sent_audio_bytes: result.sent_audio_bytes,
+                            sent_chunk_count: result.sent_chunk_count,
+                            capture_source_sample_rate: result.capture_source_sample_rate,
+                            capture_source_channels: result.capture_source_channels,
+                            capture_sample_format: result.capture_sample_format,
+                            capture_direct_target_format: result.capture_direct_target_format,
+                            logs: json!([result.response_json]),
+                        }),
+                };
 
                 match session_result {
                     Ok(result) => {
@@ -123,8 +190,11 @@ pub async fn run_bridge_loop(
                             }
                         );
                         let json_result = json!({
-                            "connect_id": result.connect_id,
-                            "handshake_headers": result.handshake_headers,
+                            "provider": result.provider,
+                            "session_id": result.session_id,
+                            "connect_id": if result.provider == "doubao" { json!(result.session_id) } else { serde_json::Value::Null },
+                            "request_id": if result.provider == "mai" { json!(result.session_id) } else { serde_json::Value::Null },
+                            "response_headers": result.response_headers,
                             "final_text": result.final_text,
                             "got_final": result.got_final,
                             "sent_audio_bytes": result.sent_audio_bytes,
@@ -204,10 +274,11 @@ pub async fn run_bridge_loop(
     Ok(())
 }
 
-fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionOptions) {
+fn print_startup_banner(config: &BridgeRuntimeConfig, asr_provider: &BridgeAsrProvider) {
     let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
     let uses_caps_lock_ptt = ptt_key_uses_caps_lock(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
+    println!("[BRIDGE] ASR provider: {}", asr_provider.name());
     println!("[BRIDGE] The foreground window at initial key-down becomes the target input window.");
     println!(
         "[BRIDGE] Hold `{}` to talk, release to finish one utterance. {}",
@@ -243,13 +314,52 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionO
         "[BRIDGE] upload format: {} Hz / {} ch / {}-bit PCM (local capture is converted only if needed)",
         config.upload_sample_rate, config.upload_channels, config.upload_bits
     );
-    if config.asr_auto_context {
-        println!(
-            "[BRIDGE] contextual ASR: auto dialog context is ON (max_items={}, max_bytes={}).",
-            config.asr_auto_context_max_items, config.asr_auto_context_max_bytes
-        );
-        println!("[BRIDGE] contextual ASR: recent final texts will be sent as corpus.context for future utterances.");
+    match asr_provider {
+        BridgeAsrProvider::Doubao(session_options) => {
+            if config.asr_auto_context {
+                println!(
+                    "[BRIDGE] contextual ASR: auto dialog context is ON (max_items={}, max_bytes={}).",
+                    config.asr_auto_context_max_items, config.asr_auto_context_max_bytes
+                );
+                println!(
+                    "[BRIDGE] contextual ASR: recent final texts will be sent as corpus.context for future utterances."
+                );
+            }
+            print_doubao_context_banner(config, session_options);
+        }
+        BridgeAsrProvider::Mai(options) => {
+            println!(
+                "[BRIDGE] MAI: model={}, locales={}, style={}.",
+                options.model,
+                options.locales.join(","),
+                options.style
+            );
+            if !options.phrases.is_empty() {
+                println!(
+                    "[BRIDGE] MAI: phrase list is enabled ({} phrases).",
+                    options.phrases.len()
+                );
+            }
+            if config.asr_auto_context {
+                println!(
+                    "[BRIDGE] contextual ASR: auto dialog context is ignored by MAI; use --mai-phrase for entity bias."
+                );
+            }
+        }
     }
+    if !config.require_title.trim().is_empty() {
+        println!(
+            "[BRIDGE] Window title must contain: {}",
+            config.require_title.trim()
+        );
+    }
+    if config.forbid_host_window_target {
+        println!("[BRIDGE] Host window targeting is disabled for this run.");
+    }
+    println!("[BRIDGE] Press Ctrl-C here to exit.");
+}
+
+fn print_doubao_context_banner(config: &BridgeRuntimeConfig, session_options: &SessionOptions) {
     if session_options
         .corpus_boosting_table_name
         .as_deref()
@@ -306,7 +416,9 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionO
             .filter(|value| !value.trim().is_empty())
         {
             if config.asr_auto_context {
-                println!("[BRIDGE] contextual ASR: note: static corpus.context will be ignored while auto dialog context is enabled.");
+                println!(
+                    "[BRIDGE] contextual ASR: note: static corpus.context will be ignored while auto dialog context is enabled."
+                );
             }
             println!(
                 "[BRIDGE] contextual ASR: corpus.context is set ({} bytes).",
@@ -314,16 +426,6 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, session_options: &SessionO
             );
         }
     }
-    if !config.require_title.trim().is_empty() {
-        println!(
-            "[BRIDGE] Window title must contain: {}",
-            config.require_title.trim()
-        );
-    }
-    if config.forbid_host_window_target {
-        println!("[BRIDGE] Host window targeting is disabled for this run.");
-    }
-    println!("[BRIDGE] Press Ctrl-C here to exit.");
 }
 
 fn print_target_window(window: &WindowInfo) {

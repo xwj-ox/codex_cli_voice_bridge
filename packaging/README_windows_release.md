@@ -4,18 +4,23 @@
 
 - `voice_bridge.exe`: push-to-talk bridge binary
 - `doubao_asr_demo.exe`: one-shot ASR demo binary
+- `mai_demo.exe`: one-shot Azure MAI demo binary
 - `configure_credentials.exe`: helper for local credential setup
 - `voice_bridge_doctor.exe`: runtime environment check helper
 - `*.cmd`: convenience wrappers that run the matching binary from this folder
 - `doubao_credentials.example.json`: blank credentials template
 - `doubao_credentials.json`: local writable credentials file
+- `mai_credentials.example.json`: blank Azure MAI credentials template
+- `mai_credentials.json`: local writable Azure MAI credentials file
 
 ## First run
 
-1. Set up the Doubao Speech service and get the APP ID and Access Token.
-2. Fill in `doubao_credentials.json` or run `configure_credentials.cmd`.
-3. Start the bridge with `voice_bridge.cmd` or `start_voice_bridge.cmd`.
-4. Hold the configured PTT key to talk, then release it to recognize and paste the final text.
+1. Choose an ASR provider: Doubao or Azure MAI.
+2. For Doubao, set up the Doubao Speech service and get the APP ID and Access Token.
+3. For MAI, set up an Azure Speech resource and get the endpoint and key.
+4. Fill in the matching credentials JSON or run `configure_credentials.cmd --provider doubao` / `configure_credentials.cmd --provider mai`.
+5. Start the bridge with `voice_bridge.cmd` or `start_voice_bridge.cmd`.
+6. Hold the configured PTT key to talk, then release it to recognize and paste the final text.
 
 ## Doubao service setup
 
@@ -55,6 +60,34 @@ The console may first show trial quota. For production or exhausted trial quota,
 
 Paste the raw Access Token value. Do not add `Bearer`, `Bearer;`, or any other prefix.
 
+## Azure MAI setup
+
+MAI uses Azure Speech LLM Speech synchronous transcription. The bundle exposes both `mai-transcribe-1` and `mai-transcribe-1.5` through `--mai-model`.
+
+Minimal credentials:
+
+```json
+{
+  "endpoint": "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com",
+  "key": "your_speech_key"
+}
+```
+
+Run a file test:
+
+```cmd
+mai_demo.exe --audio-file audio.wav --locale zh --model mai-transcribe-1.5
+```
+
+Run the bridge with either MAI model:
+
+```cmd
+voice_bridge.exe --asr-provider mai --mai-model mai-transcribe-1 --mai-locale zh
+voice_bridge.exe --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+```
+
+`mai-transcribe-1.5` also supports `--mai-style verbatim` and `--mai-phrase phrase`. Phrase list is entity bias, not a free-form prompt.
+
 ## Credentials without JSON
 
 The binaries also read credentials from environment variables:
@@ -89,6 +122,16 @@ voice_bridge.exe --app-id your_app_id --access-token your_access_token
 ```
 
 Credential priority is CLI arguments, then environment variables, then `doubao_credentials.json`.
+
+For MAI:
+
+```cmd
+set AZURE_SPEECH_ENDPOINT=https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com
+set AZURE_SPEECH_KEY=your_speech_key
+voice_bridge.exe --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+```
+
+MAI credential priority is CLI arguments, then environment variables, then `mai_credentials.json`.
 
 ## Notes
 

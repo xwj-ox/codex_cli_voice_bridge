@@ -1,6 +1,8 @@
 target/
 doubao_credentials.json*
+mai_credentials.json*
 *.log
 *.zip
+outputs/
 packaging/release/
 .DS_Store

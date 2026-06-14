@@ -1,6 +1,6 @@
 # codex_cli_voice_bridge_rust
 
-Minimal public repository for the Rust implementation of the Doubao ASR CLI and the Codex-style push-to-talk voice bridge.
+Minimal public repository for the Rust implementation of the Codex-style push-to-talk voice bridge, with first-class ASR providers for Doubao and Azure MAI.
 
 ## Included
 
@@ -10,6 +10,7 @@ Minimal public repository for the Rust implementation of the Doubao ASR CLI and 
 - `packaging/build_macos_release.sh`: macOS release bundle script
 - `packaging/check_macos_ready.sh`: macOS environment check
 - `doubao_credentials.example.json`: blank credentials template
+- `mai_credentials.example.json`: blank Azure MAI credentials template
 
 ## Not included
 
@@ -28,7 +29,8 @@ Minimal public repository for the Rust implementation of the Doubao ASR CLI and 
 Configure credentials:
 
 ```powershell
-cargo run --bin configure_credentials
+cargo run --bin configure_credentials -- --provider doubao
+cargo run --bin configure_credentials -- --provider mai
 ```
 
 List input devices:
@@ -37,10 +39,17 @@ List input devices:
 cargo run --bin doubao_asr_demo -- --mic-list-devices
 ```
 
+Run a one-shot Azure MAI file test:
+
+```powershell
+cargo run --bin mai_demo -- --audio-file .\audio.wav --locale zh --model mai-transcribe-1.5
+```
+
 Run the bridge:
 
 ```powershell
-cargo run --bin voice_bridge
+cargo run --bin voice_bridge -- --asr-provider doubao
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
 ```
 
 ## Doubao service setup
@@ -86,9 +95,42 @@ Official references:
 
 The console may first show trial quota. For production or exhausted trial quota, open the formal paid service or buy the needed resource package in Volcengine. If the service is not opened for the selected application, or the resource ID does not match the opened package, the WebSocket handshake can fail even when the APP ID and Access Token are correct.
 
-## Credentials
+## Azure MAI setup
 
-Credentials are resolved in this order:
+This project calls Azure Speech LLM Speech synchronous transcription:
+
+- Endpoint path: `/speechtotext/transcriptions:transcribe`
+- Auth header: `Ocp-Apim-Subscription-Key`
+- Supported MAI models exposed by this project: `mai-transcribe-1` and `mai-transcribe-1.5`
+- Default API version: `2025-10-15`
+
+Create or reuse an Azure Speech resource that has access to MAI. The bridge needs only the Azure Speech endpoint and key:
+
+```json
+{
+  "endpoint": "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com",
+  "key": "your_speech_key"
+}
+```
+
+Configure it interactively:
+
+```powershell
+cargo run --bin configure_credentials -- --provider mai
+```
+
+Run the bridge with MAI:
+
+```powershell
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+```
+
+`mai-transcribe-1.5` additionally supports `--mai-style verbatim` and `--mai-phrase <phrase>` for entity bias. `phraseList` is a short phrase/entity bias, not a free-form prompt or long dialog context.
+
+## Doubao credentials
+
+Doubao credentials are resolved in this order:
 
 1. CLI arguments: `--app-id` and `--access-token`
 2. Environment variables: `DOUBAO_ASR_APP_ID` and `DOUBAO_ASR_ACCESS_TOKEN`
@@ -152,6 +194,24 @@ Or pass credentials directly for one run:
 cargo run --bin voice_bridge -- --app-id "your_app_id" --access-token "your_access_token"
 ```
 
+## MAI credentials
+
+MAI credentials are resolved in this order:
+
+1. CLI arguments: `--mai-endpoint` and `--mai-key` for `voice_bridge`, or `--endpoint` and `--key` for `mai_demo`
+2. Environment variables: `AZURE_SPEECH_ENDPOINT` and `AZURE_SPEECH_KEY`
+3. `mai_credentials.json` in the current working directory or project root
+
+Use environment variables if you do not want to create a JSON file.
+
+Windows PowerShell:
+
+```powershell
+$env:AZURE_SPEECH_ENDPOINT = "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com"
+$env:AZURE_SPEECH_KEY = "your_speech_key"
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+```
+
 ## Defaults
 
 - `voice_bridge` enables `enable_nonstream` by default
@@ -163,7 +223,7 @@ cargo run --bin voice_bridge -- --app-id "your_app_id" --access-token "your_acce
 - Default PTT hold threshold: `250 ms`
 - Default maximum recording duration: `60 s`
 
-## Contextual ASR (hotwords / corpus)
+## Contextual ASR
 
 Doubao streaming ASR supports request-time hints for domain words (hotwords) and richer dialog context via `request.corpus`.
 
@@ -191,6 +251,12 @@ The `corpus.context` value is sent to the ASR service with each utterance. Avoid
 
 When `--asr-auto-context` is enabled, the bridge also sends recent final recognition texts as the dialog context for future utterances. This can improve recognition continuity, but it also means prior dictation text is sent along with each new utterance.
 
+Azure MAI does not support free-form prompt-tuning in this integration. Use `--mai-phrase <phrase>` with `mai-transcribe-1.5` for entity bias:
+
+```powershell
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh --mai-phrase "Azure AI Foundry"
+```
+
 ## Release helpers
 
 Windows:
@@ -208,4 +274,4 @@ bash ./packaging/build_macos_release.sh
 
 ## Security note
 
-Do not commit real credentials. If you use a file, keep `doubao_credentials.json` local and use `doubao_credentials.example.json` only as the template.
+Do not commit real credentials. If you use files, keep `doubao_credentials.json` and `mai_credentials.json` local and use only the `*.example.json` templates.
