@@ -7,8 +7,9 @@ use clap::{Parser, ValueEnum};
 use codex_cli_voice_bridge_rust::audio::{MicrophoneCaptureOptions, list_input_devices};
 use codex_cli_voice_bridge_rust::config::{default_mai_credentials_path, resolve_mai_credentials};
 use codex_cli_voice_bridge_rust::mai::{
-    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_MODEL, MaiOptions, guess_audio_content_type,
-    run_file_session, run_mic_session,
+    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_MODEL,
+    DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION, DEFAULT_MAI_MODEL,
+    MaiOptions, MaiTransport, guess_audio_content_type, run_file_session, run_mic_session,
 };
 
 const MIC_UPLOAD_SAMPLE_RATE: u32 = 16000;
@@ -48,6 +49,12 @@ struct Args {
     credentials: String,
     #[arg(long, default_value = DEFAULT_MAI_API_VERSION, help = "Azure Speech API version")]
     api_version: String,
+    #[arg(
+        long,
+        default_value = "rest",
+        help = "MAI transport: rest or voice-live"
+    )]
+    transport: String,
     #[arg(long, default_value = DEFAULT_MAI_MODEL, help = "MAI model: mai-transcribe-1 or mai-transcribe-1.5")]
     model: String,
     #[arg(
@@ -97,7 +104,7 @@ struct Args {
     #[arg(
         long,
         default_value_t = 600.0,
-        help = "HTTP request timeout in seconds"
+        help = "MAI request/final-result timeout in seconds"
     )]
     timeout: f64,
     #[arg(
@@ -106,6 +113,30 @@ struct Args {
         help = "Retry count for 429 and transient 5xx responses"
     )]
     max_retries: usize,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_API_VERSION,
+        help = "MAI Voice Live API version"
+    )]
+    live_api_version: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_MODEL,
+        help = "MAI Voice Live session model, for example gpt-4.1"
+    )]
+    live_model: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_TURN_DETECTION,
+        help = "MAI Voice Live turn detection: none, server_vad, azure_semantic_vad, or azure_semantic_vad_multilingual"
+    )]
+    live_turn_detection: String,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAI_LIVE_SILENCE_DURATION_MS,
+        help = "MAI Voice Live silence duration in milliseconds when turn detection is enabled"
+    )]
+    live_silence_duration_ms: u32,
     #[arg(
         long,
         default_value = "",
@@ -178,6 +209,7 @@ async fn main() -> Result<()> {
         resolve_mai_credentials(Some(&args.endpoint), Some(&args.key), &credentials_path)?;
 
     let options = MaiOptions {
+        transport: MaiTransport::parse(&args.transport)?,
         endpoint: credentials.endpoint,
         key: credentials.key,
         api_version: args.api_version.trim().to_owned(),
@@ -192,6 +224,10 @@ async fn main() -> Result<()> {
             .collect(),
         timeout_seconds: args.timeout,
         max_retries: args.max_retries,
+        live_api_version: args.live_api_version.trim().to_owned(),
+        live_model: args.live_model.trim().to_owned(),
+        live_turn_detection: args.live_turn_detection.trim().to_owned(),
+        live_silence_duration_ms: args.live_silence_duration_ms,
     };
 
     let result = match args.input_source {
@@ -207,6 +243,7 @@ async fn main() -> Result<()> {
             }
             if !args.quiet {
                 println!("Provider: MAI");
+                println!("Transport: {}", options.transport.as_str());
                 println!("Input source: file");
                 println!("Audio bytes: {}", audio_bytes.len());
                 println!("Model: {}", options.model);
@@ -226,6 +263,7 @@ async fn main() -> Result<()> {
         InputSource::Mic => {
             if !args.quiet {
                 println!("Provider: MAI");
+                println!("Transport: {}", options.transport.as_str());
                 println!("Input source: mic");
                 println!("Model: {}", options.model);
                 println!(

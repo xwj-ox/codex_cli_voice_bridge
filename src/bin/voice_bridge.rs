@@ -13,7 +13,11 @@ use codex_cli_voice_bridge_rust::config::{
     default_credentials_path, default_mai_credentials_path, resolve_credentials,
     resolve_mai_credentials,
 };
-use codex_cli_voice_bridge_rust::mai::{DEFAULT_MAI_API_VERSION, DEFAULT_MAI_MODEL, MaiOptions};
+use codex_cli_voice_bridge_rust::mai::{
+    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_MODEL,
+    DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION, DEFAULT_MAI_MODEL,
+    MaiOptions, MaiTransport,
+};
 use codex_cli_voice_bridge_rust::platform::{PlatformInitOptions, create_platform_services};
 use codex_cli_voice_bridge_rust::preview::PreviewMode;
 use codex_cli_voice_bridge_rust::protocol::{DEFAULT_RESOURCE_ID, DEFAULT_WS_URL};
@@ -77,6 +81,12 @@ struct Args {
     mai_credentials: String,
     #[arg(long, default_value = DEFAULT_MAI_API_VERSION, help = "Azure Speech API version for MAI")]
     mai_api_version: String,
+    #[arg(
+        long,
+        default_value = "rest",
+        help = "MAI transport: rest or voice-live"
+    )]
+    mai_transport: String,
     #[arg(long, default_value = DEFAULT_MAI_MODEL, help = "MAI model: mai-transcribe-1 or mai-transcribe-1.5")]
     mai_model: String,
     #[arg(
@@ -100,7 +110,7 @@ struct Args {
     #[arg(
         long,
         default_value_t = 600.0,
-        help = "MAI HTTP request timeout in seconds"
+        help = "MAI request/final-result timeout in seconds"
     )]
     mai_timeout: f64,
     #[arg(
@@ -109,6 +119,30 @@ struct Args {
         help = "MAI retry count for 429 and transient 5xx responses"
     )]
     mai_max_retries: usize,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_API_VERSION,
+        help = "MAI Voice Live API version"
+    )]
+    mai_live_api_version: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_MODEL,
+        help = "MAI Voice Live session model, for example gpt-4.1"
+    )]
+    mai_live_model: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_MAI_LIVE_TURN_DETECTION,
+        help = "MAI Voice Live turn detection: none, server_vad, azure_semantic_vad, or azure_semantic_vad_multilingual"
+    )]
+    mai_live_turn_detection: String,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAI_LIVE_SILENCE_DURATION_MS,
+        help = "MAI Voice Live silence duration in milliseconds when turn detection is enabled"
+    )]
+    mai_live_silence_duration_ms: u32,
     #[arg(
         long,
         default_value_t = 16000,
@@ -374,8 +408,9 @@ fn build_session_options(args: &Args, app_id: String, access_token: String) -> S
     options
 }
 
-fn build_mai_options(args: &Args, endpoint: String, key: String) -> MaiOptions {
-    MaiOptions {
+fn build_mai_options(args: &Args, endpoint: String, key: String) -> Result<MaiOptions> {
+    Ok(MaiOptions {
+        transport: MaiTransport::parse(&args.mai_transport)?,
         endpoint,
         key,
         api_version: args.mai_api_version.trim().to_owned(),
@@ -390,7 +425,11 @@ fn build_mai_options(args: &Args, endpoint: String, key: String) -> MaiOptions {
             .collect(),
         timeout_seconds: args.mai_timeout,
         max_retries: args.mai_max_retries,
-    }
+        live_api_version: args.mai_live_api_version.trim().to_owned(),
+        live_model: args.mai_live_model.trim().to_owned(),
+        live_turn_detection: args.mai_live_turn_detection.trim().to_owned(),
+        live_silence_duration_ms: args.mai_live_silence_duration_ms,
+    })
 }
 
 #[tokio::main]
@@ -455,7 +494,7 @@ async fn main() -> Result<()> {
                 &args,
                 credentials.endpoint,
                 credentials.key,
-            ))
+            )?)
         }
     };
     let mut platform = create_platform_services(&PlatformInitOptions {

@@ -3,7 +3,7 @@
 Rust push-to-talk voice bridge for pasting ASR output into the foreground app. The bridge has two first-class ASR providers:
 
 - `doubao`: Doubao streaming ASR over WebSocket.
-- `mai`: MAI through Azure Speech synchronous transcription.
+- `mai`: MAI through Azure Speech REST transcription or Voice Live WebSocket transcription.
 
 Doubao remains the default provider. MAI is selected explicitly with `--asr-provider mai`.
 
@@ -27,6 +27,7 @@ Run the push-to-talk bridge:
 ```powershell
 cargo run --bin voice_bridge -- --asr-provider doubao
 cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1 --mai-locale zh
 ```
 
 Run one-shot file demos:
@@ -65,7 +66,7 @@ Both files are ignored by git. Only the `*.example.json` templates should be com
 Provider-specific options keep their provider prefix where needed:
 
 - Doubao: `--resource-id`, `--ws-url`, `--asr-hotword`, `--asr-corpus-context`, `--asr-auto-context`.
-- MAI: `--mai-model`, `--mai-locale`, `--mai-style`, `--mai-phrase`, `--mai-credentials`.
+- MAI: `--mai-transport`, `--mai-model`, `--mai-locale`, `--mai-style`, `--mai-phrase`, `--mai-credentials`.
 
 ## Defaults
 

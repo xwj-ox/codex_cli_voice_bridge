@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::asr::{SessionOptions, run_mic_session as run_doubao_mic_session};
 use crate::audio::MicrophoneCaptureOptions;
-use crate::mai::{MaiOptions, run_mic_session as run_mai_mic_session};
+use crate::mai::{MaiOptions, run_mic_session_with_callback as run_mai_mic_session};
 use crate::platform::{CueKind, PlatformServices, WindowInfo};
 use crate::preview::{PreviewMode, PreviewPrinter};
 
@@ -157,7 +157,9 @@ pub async fn run_bridge_loop(
                             logs: json!(result.logs),
                         })
                     }
-                    BridgeAsrProvider::Mai(options) => run_mai_mic_session(options, &capture_options)
+                    BridgeAsrProvider::Mai(options) => run_mai_mic_session(options, &capture_options, |text, is_final| {
+                        preview.show(text, is_final);
+                    })
                         .await
                         .map(|result| BridgeRecognitionResult {
                             provider: "mai",
@@ -329,11 +331,18 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, asr_provider: &BridgeAsrPr
         }
         BridgeAsrProvider::Mai(options) => {
             println!(
-                "[BRIDGE] MAI: model={}, locales={}, style={}.",
+                "[BRIDGE] MAI: transport={}, model={}, locales={}, style={}.",
+                options.transport.as_str(),
                 options.model,
                 options.locales.join(","),
                 options.style
             );
+            if options.transport.as_str() == "voice-live" {
+                println!(
+                    "[BRIDGE] MAI Voice Live: session_model={}, api_version={}, turn_detection={}.",
+                    options.live_model, options.live_api_version, options.live_turn_detection
+                );
+            }
             if !options.phrases.is_empty() {
                 println!(
                     "[BRIDGE] MAI: phrase list is enabled ({} phrases).",
