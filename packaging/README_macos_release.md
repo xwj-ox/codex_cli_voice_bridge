@@ -28,8 +28,8 @@
 
 ```bash
 ./voice_bridge.sh --asr-provider doubao
-./voice_bridge.sh --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
-./voice_bridge.sh --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1 --mai-locale zh
+./voice_bridge.sh --asr-provider mai --mai-model mai-transcribe-1.5
+./voice_bridge.sh --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1
 ```
 
 ## Provider Docs
@@ -61,8 +61,8 @@ Credential priority is CLI arguments, then environment variables, then the local
 
 ```bash
 ./doubao_asr_demo.sh --audio-file audio.pcm --audio-format pcm
-./mai_demo.sh --audio-file audio.wav --locale zh --model mai-transcribe-1.5
-./mai_demo.sh --input-source mic --transport voice-live --model mai-transcribe-1 --locale zh --mic-duration 5
+./mai_demo.sh --audio-file audio.wav --model mai-transcribe-1.5
+./mai_demo.sh --input-source mic --transport voice-live --model mai-transcribe-1 --mic-duration 5
 ```
 
 ## Notes

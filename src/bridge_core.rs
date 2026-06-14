@@ -334,7 +334,11 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, asr_provider: &BridgeAsrPr
                 "[BRIDGE] MAI: transport={}, model={}, locales={}, style={}.",
                 options.transport.as_str(),
                 options.model,
-                options.locales.join(","),
+                if options.locales.is_empty() {
+                    "auto".to_owned()
+                } else {
+                    options.locales.join(",")
+                },
                 options.style
             );
             if options.transport.as_str() == "voice-live" {

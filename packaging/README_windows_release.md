@@ -26,8 +26,8 @@ configure_credentials.cmd --provider mai
 
 ```cmd
 voice_bridge.cmd --asr-provider doubao
-voice_bridge.cmd --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
-voice_bridge.cmd --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1 --mai-locale zh
+voice_bridge.cmd --asr-provider mai --mai-model mai-transcribe-1.5
+voice_bridge.cmd --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1
 ```
 
 4. Hold the configured PTT key to talk, then release it to recognize and paste the final text.
@@ -61,8 +61,8 @@ Credential priority is CLI arguments, then environment variables, then the local
 
 ```cmd
 doubao_asr_demo.cmd --audio-file audio.pcm --audio-format pcm
-mai_demo.cmd --audio-file audio.wav --locale zh --model mai-transcribe-1.5
-mai_demo.cmd --input-source mic --transport voice-live --model mai-transcribe-1 --locale zh --mic-duration 5
+mai_demo.cmd --audio-file audio.wav --model mai-transcribe-1.5
+mai_demo.cmd --input-source mic --transport voice-live --model mai-transcribe-1 --mic-duration 5
 ```
 
 ## Notes

@@ -60,8 +60,7 @@ struct Args {
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "zh",
-        help = "MAI locale hint; repeat or comma-separate values"
+        help = "Optional MAI locale hint; repeat or comma-separate values"
     )]
     locale: Vec<String>,
     #[arg(

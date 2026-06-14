@@ -77,7 +77,7 @@ impl Default for MaiOptions {
             key: String::new(),
             api_version: DEFAULT_MAI_API_VERSION.to_owned(),
             model: DEFAULT_MAI_MODEL.to_owned(),
-            locales: vec!["zh".to_owned()],
+            locales: Vec::new(),
             style: "default".to_owned(),
             phrases: Vec::new(),
             timeout_seconds: 600.0,
@@ -131,14 +131,6 @@ impl MaiOptions {
             }
             validate_live_turn_detection(&self.live_turn_detection)?;
         }
-        if self
-            .locales
-            .iter()
-            .map(|value| value.trim())
-            .all(str::is_empty)
-        {
-            bail!("At least one MAI locale is required");
-        }
         if !matches!(self.style.trim(), "default" | "verbatim") {
             bail!("Unsupported MAI style: {}", self.style);
         }
@@ -174,9 +166,11 @@ impl MaiOptions {
         }
 
         let mut definition = json!({
-            "locales": locales,
             "enhancedMode": enhanced_mode,
         });
+        if !locales.is_empty() {
+            definition["locales"] = json!(locales);
+        }
         if self.model.trim() == "mai-transcribe-1.5" && !self.phrases.is_empty() {
             let phrases = self
                 .phrases
@@ -976,6 +970,22 @@ mod tests {
             "zh,en"
         );
         assert_eq!(update["session"]["turn_detection"], Value::Null);
+    }
+
+    #[test]
+    fn rest_definition_omits_locales_by_default() {
+        let options = MaiOptions {
+            endpoint: "https://example.cognitiveservices.azure.com".to_owned(),
+            key: "key".to_owned(),
+            ..MaiOptions::default()
+        };
+
+        let definition = options.definition().unwrap();
+        assert!(definition.get("locales").is_none());
+        assert_eq!(
+            definition["enhancedMode"]["model"],
+            MaiOptions::default().model
+        );
     }
 
     #[test]

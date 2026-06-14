@@ -58,31 +58,31 @@ The resolver also accepts nested Azure resource JSON with `/endpoints/resource_e
 Run the bridge with MAI 1.5:
 
 ```powershell
-cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5
 ```
 
 Run the bridge with MAI 1:
 
 ```powershell
-cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1
 ```
 
 Run the bridge with MAI 1 through Voice Live:
 
 ```powershell
-cargo run --bin voice_bridge -- --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1
 ```
 
 Run a one-shot file test:
 
 ```powershell
-cargo run --bin mai_demo -- --audio-file .\audio.wav --locale zh --model mai-transcribe-1.5
+cargo run --bin mai_demo -- --audio-file .\audio.wav --model mai-transcribe-1.5
 ```
 
 Run a fixed-duration Voice Live microphone test:
 
 ```powershell
-cargo run --bin mai_demo -- --input-source mic --transport voice-live --model mai-transcribe-1 --locale zh --mic-duration 5
+cargo run --bin mai_demo -- --input-source mic --transport voice-live --model mai-transcribe-1 --mic-duration 5
 ```
 
 Use environment variables instead of a credentials file:
@@ -90,7 +90,7 @@ Use environment variables instead of a credentials file:
 ```powershell
 $env:AZURE_SPEECH_ENDPOINT = "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com"
 $env:AZURE_SPEECH_KEY = "your_speech_key"
-cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5
 ```
 
 ## Model Options
@@ -99,9 +99,11 @@ Common MAI options:
 
 - `--mai-transport rest|voice-live`
 - `--mai-model mai-transcribe-1|mai-transcribe-1.5`
-- `--mai-locale <locale>`: repeat or comma-separate locale hints.
+- `--mai-locale <locale>`: optional locale hint; repeat or comma-separate values.
 - `--mai-timeout <seconds>`: request/final-result timeout.
 - `--mai-max-retries <count>`: retry count for 429 and transient 5xx responses.
+
+When no locale is provided, the bridge omits the locale hint and lets MAI auto-detect speech languages. This is the default and is usually preferable for Chinese/English code-switching.
 
 MAI 1.5-only options:
 
@@ -111,7 +113,7 @@ MAI 1.5-only options:
 Example:
 
 ```powershell
-cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh --mai-phrase "Azure AI Foundry"
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-phrase "Azure AI Foundry"
 ```
 
 `phraseList` is entity bias, not a free-form prompt or long dialog context. MAI does not support the Doubao `--asr-auto-context` dialog context path in this integration.

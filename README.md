@@ -26,15 +26,15 @@ Run the push-to-talk bridge:
 
 ```powershell
 cargo run --bin voice_bridge -- --asr-provider doubao
-cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5 --mai-locale zh
-cargo run --bin voice_bridge -- --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1 --mai-locale zh
+cargo run --bin voice_bridge -- --asr-provider mai --mai-model mai-transcribe-1.5
+cargo run --bin voice_bridge -- --asr-provider mai --mai-transport voice-live --mai-model mai-transcribe-1
 ```
 
 Run one-shot file demos:
 
 ```powershell
 cargo run --bin doubao_asr_demo -- --audio-file .\audio.pcm --audio-format pcm
-cargo run --bin mai_demo -- --audio-file .\audio.wav --locale zh --model mai-transcribe-1.5
+cargo run --bin mai_demo -- --audio-file .\audio.wav --model mai-transcribe-1.5
 ```
 
 ## Provider Setup
