@@ -12,7 +12,7 @@ use reqwest::StatusCode;
 use reqwest::multipart::{Form, Part};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, sleep, timeout};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -290,6 +290,7 @@ where
     options.validate()?;
     ensure_tls_provider()?;
 
+    println!("[MAI Voice Live] starting microphone capture.");
     let mut capture = start_microphone_capture(capture_options)?;
     let source_sample_rate = capture.source_sample_rate;
     let source_channels = capture.source_channels;
@@ -302,6 +303,16 @@ where
         bail!("MAI Voice Live microphone mode currently only supports mono PCM16");
     }
 
+    println!(
+        "[MAI Voice Live] microphone capture ready: source={} Hz/{} ch/{}, upload={} Hz/{} ch PCM16, direct_target_format={}",
+        source_sample_rate,
+        source_channels,
+        sample_format,
+        sample_rate,
+        channels,
+        direct_target_format
+    );
+
     let url = build_voice_live_url(options)?;
     let mut request = url
         .into_client_request()
@@ -311,9 +322,18 @@ where
         HeaderValue::from_str(options.key.trim()).context("Invalid MAI key header value")?,
     );
 
+    println!(
+        "[MAI Voice Live] connecting WebSocket: session_model={}, api_version={}, transcription_model=mai-transcribe-1",
+        options.live_model,
+        options.live_api_version
+    );
     let (mut ws, response) = connect_async(request)
         .await
         .context("Failed to connect to MAI Voice Live WebSocket")?;
+    println!(
+        "[MAI Voice Live] WebSocket connected: status={}",
+        response.status()
+    );
     let response_headers = response
         .headers()
         .iter()
@@ -329,9 +349,14 @@ where
     ws.send(Message::Text(session_update.to_string().into()))
         .await
         .context("Failed to send MAI Voice Live session.update")?;
+    println!("[MAI Voice Live] session.update sent; waiting for session.updated.");
 
     let mut state = VoiceLiveState::default();
     wait_for_voice_live_session_update(&mut ws, &mut state).await?;
+    println!(
+        "[MAI Voice Live] session updated: session_id={}",
+        state.session_id.as_deref().unwrap_or("<unknown>")
+    );
 
     let mut sent_audio_bytes = 0usize;
     let mut sent_chunk_count = 0usize;
@@ -352,6 +377,24 @@ where
                         .context("Failed to send MAI Voice Live audio chunk")?;
                     sent_audio_bytes += data.len();
                     sent_chunk_count += 1;
+                    if sent_chunk_count == 1 || sent_chunk_count % 25 == 0 {
+                        println!(
+                            "[MAI Voice Live] audio streaming progress: chunks={}, bytes={}",
+                            sent_chunk_count,
+                            sent_audio_bytes
+                        );
+                    }
+                }
+                if is_last {
+                    println!(
+                        "[MAI Voice Live] final audio chunk observed: chunks={}, bytes={}",
+                        sent_chunk_count,
+                        sent_audio_bytes
+                    );
+                    if !state.got_final {
+                        send_voice_live_commit(&mut ws, &mut state, "client-final-audio-chunk")
+                            .await?;
+                    }
                 }
                 drain_voice_live_events(
                     &mut ws,
@@ -369,18 +412,17 @@ where
     }
 
     if !state.got_final && !state.committed {
-        ws.send(Message::Text(
-            json!({ "type": "input_audio_buffer.commit" })
-                .to_string()
-                .into(),
-        ))
-        .await
-        .context("Failed to send MAI Voice Live input_audio_buffer.commit")?;
-        state.committed = true;
+        send_voice_live_commit(&mut ws, &mut state, "capture-ended-without-final-chunk").await?;
     }
 
     let deadline = Duration::from_secs_f64(options.timeout_seconds.max(1.0));
-    let started = tokio::time::Instant::now();
+    let started = Instant::now();
+    let mut last_wait_log = Instant::now();
+    println!(
+        "[MAI Voice Live] final wait started: timeout_seconds={:.1}, committed={}",
+        options.timeout_seconds.max(1.0),
+        state.committed
+    );
     while !state.got_final && started.elapsed() < deadline {
         let remaining = deadline.saturating_sub(started.elapsed());
         if remaining.is_zero() {
@@ -388,8 +430,35 @@ where
         }
         let wait = remaining.min(Duration::from_millis(500));
         if !recv_one_voice_live_event(&mut ws, &mut state, wait, &mut on_text).await? {
+            if last_wait_log.elapsed() >= Duration::from_secs(5) {
+                println!(
+                    "[MAI Voice Live] still waiting for final transcription: elapsed_ms={}, remaining_ms={}, committed={}, audio_chunks={}, audio_bytes={}",
+                    started.elapsed().as_millis(),
+                    remaining.as_millis(),
+                    state.committed,
+                    sent_chunk_count,
+                    sent_audio_bytes
+                );
+                last_wait_log = Instant::now();
+            }
             continue;
         }
+        last_wait_log = Instant::now();
+    }
+
+    if state.got_final {
+        println!(
+            "[MAI Voice Live] final transcription received: chars={}",
+            state.final_text.trim().chars().count()
+        );
+    } else {
+        println!(
+            "[MAI Voice Live] final wait ended without final transcription: elapsed_ms={}, committed={}, audio_chunks={}, audio_bytes={}",
+            started.elapsed().as_millis(),
+            state.committed,
+            sent_chunk_count,
+            sent_audio_bytes
+        );
     }
 
     let _ = ws.close(None).await;
@@ -407,6 +476,36 @@ where
         capture_direct_target_format: Some(direct_target_format),
         response_json: Value::Array(state.logs),
     })
+}
+
+async fn send_voice_live_commit<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    state: &mut VoiceLiveState,
+    reason: &str,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    if state.committed {
+        println!(
+            "[MAI Voice Live] input_audio_buffer.commit already sent; reason={reason}."
+        );
+        return Ok(());
+    }
+
+    println!("[MAI Voice Live] sending input_audio_buffer.commit: reason={reason}.");
+    ws.send(Message::Text(
+        json!({ "type": "input_audio_buffer.commit" })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .context("Failed to send MAI Voice Live input_audio_buffer.commit")?;
+    state.committed = true;
+    println!(
+        "[MAI Voice Live] commit sent immediately; server should stop waiting for more audio and start final transcription."
+    );
+    Ok(())
 }
 
 async fn run_file_session_with_capture_metadata(
@@ -710,6 +809,10 @@ where
                 .get("item_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            println!(
+                "[MAI Voice Live] server acknowledged audio commit: item_id={}",
+                state.item_id.as_deref().unwrap_or("<unknown>")
+            );
         }
         "conversation.item.input_audio_transcription.delta" => {
             if let Some(delta) = value.get("delta").and_then(Value::as_str) {
@@ -719,7 +822,12 @@ where
         }
         "conversation.item.input_audio_transcription.completed" => {
             state.final_text = extract_voice_live_transcript(&value);
-            state.got_final = !state.final_text.trim().is_empty();
+            state.got_final = true;
+            println!(
+                "[MAI Voice Live] transcription completed event: chars={}, empty_transcript={}",
+                state.final_text.trim().chars().count(),
+                state.final_text.trim().is_empty()
+            );
             on_text(&state.final_text, true);
         }
         "conversation.item.input_audio_transcription.failed" => {

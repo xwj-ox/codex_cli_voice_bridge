@@ -115,6 +115,10 @@ pub async fn run_bridge_loop(
 
                 utterance_index += 1;
                 println!("\n[BRIDGE] listening for utterance #{} ...", utterance_index);
+                println!(
+                    "[BRIDGE] waiting for PTT release or mic-duration timeout ({:.1}s) before finalizing audio.",
+                    config.mic_duration
+                );
                 play_cue_if_enabled(config, &*platform.cue_player, CueKind::Listen);
                 preview.reset();
 
@@ -280,7 +284,9 @@ fn print_startup_banner(config: &BridgeRuntimeConfig, asr_provider: &BridgeAsrPr
     let uses_fn_ptt = ptt_key_uses_fn(&config.ptt_key_display);
     let uses_caps_lock_ptt = ptt_key_uses_caps_lock(&config.ptt_key_display);
     println!("[BRIDGE] Rust voice bridge started.");
+    println!("[BRIDGE] terminal platform: {}", std::env::consts::OS);
     println!("[BRIDGE] ASR provider: {}", asr_provider.name());
+    println!("[BRIDGE] PTT key: {}", config.ptt_key_display);
     println!("[BRIDGE] The foreground window at initial key-down becomes the target input window.");
     println!(
         "[BRIDGE] Hold `{}` to talk, release to finish one utterance. {}",

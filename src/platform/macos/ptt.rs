@@ -506,6 +506,10 @@ fn worker_loop(
                 if physical_pressed {
                     continue;
                 }
+                println!(
+                    "[PTT] key press detected; hold for {} ms to activate recording.",
+                    hold_ms
+                );
                 physical_pressed = true;
                 activated = false;
                 press_started_at = Some(Instant::now());
@@ -528,6 +532,10 @@ fn worker_loop(
                     continue;
                 }
                 activated = true;
+                println!(
+                    "[PTT] hold threshold reached after {} ms; recording activated.",
+                    hold_ms
+                );
                 let stop_signal = Arc::new(AtomicBool::new(false));
                 active_stop_signal = Some(stop_signal.clone());
                 let target_window = press_window
@@ -557,11 +565,28 @@ fn finish_press(
     press_window: &mut Option<WindowInfo>,
     active_stop_signal: &mut Option<Arc<AtomicBool>>,
 ) {
+    let elapsed_ms = press_started_at
+        .as_ref()
+        .map(|started| started.elapsed().as_millis())
+        .unwrap_or_default();
     if *activated {
         if let Some(stop_signal) = active_stop_signal.take() {
+            println!(
+                "[PTT] key release detected after {} ms; stop signal sent to microphone capture.",
+                elapsed_ms
+            );
             stop_signal.store(true, Ordering::Relaxed);
+        } else {
+            println!(
+                "[PTT] key release detected after {} ms, but no active stop signal was available.",
+                elapsed_ms
+            );
         }
     } else if *physical_pressed && passthrough_short_press {
+        println!(
+            "[PTT] short key press released after {} ms; replaying original key press.",
+            elapsed_ms
+        );
         let _ = send_key_tap(key);
     }
     *physical_pressed = false;

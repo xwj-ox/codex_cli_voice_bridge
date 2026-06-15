@@ -300,7 +300,7 @@ pub fn start_microphone_capture(
     let external_stop = options.stop_signal.clone();
     thread::spawn(move || {
         let started = Instant::now();
-        loop {
+        let stop_reason = loop {
             if finalize_stop.load(Ordering::Relaxed) {
                 return;
             }
@@ -308,13 +308,18 @@ pub fn start_microphone_capture(
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::Relaxed))
             {
-                break;
+                break "ptt-release";
             }
             if started.elapsed() >= Duration::from_secs_f32(finalize_duration) {
-                break;
+                break "max-duration";
             }
             thread::sleep(Duration::from_millis(10));
-        }
+        };
+        println!(
+            "[AUDIO] finalizing microphone capture: reason={}, elapsed_ms={}",
+            stop_reason,
+            started.elapsed().as_millis()
+        );
         finalize_stop.store(true, Ordering::Relaxed);
         let mut state = match finalize_state.lock() {
             Ok(state) => state,
@@ -328,6 +333,7 @@ pub fn start_microphone_capture(
 
         if !state.pending_bytes.is_empty() {
             let data = std::mem::take(&mut state.pending_bytes);
+            println!("[AUDIO] sending final microphone chunk: bytes={}", data.len());
             let _ = finalize_tx.send(CaptureEvent::Chunk {
                 data,
                 is_last: true,
@@ -336,6 +342,9 @@ pub fn start_microphone_capture(
         }
 
         if state.received_any {
+            println!(
+                "[AUDIO] no pending bytes at finalize; sending synthetic final chunk to close capture."
+            );
             let _ = finalize_tx.send(CaptureEvent::Chunk {
                 data: vec![0u8; finalize_channels as usize * 2],
                 is_last: true,
@@ -343,6 +352,7 @@ pub fn start_microphone_capture(
             return;
         }
 
+        println!("[AUDIO] no microphone audio captured before finalize.");
         let _ = finalize_tx.send(CaptureEvent::Error(
             "No microphone audio captured. Check device permissions and settings.".to_owned(),
         ));
