@@ -100,7 +100,7 @@ Common MAI options:
 - `--mai-transport rest|voice-live`
 - `--mai-model mai-transcribe-1|mai-transcribe-1.5`
 - `--mai-locale <locale>`: optional locale hint; repeat or comma-separate values.
-- `--mai-timeout <seconds>`: request/final-result timeout.
+- `--mai-timeout <seconds>`: REST request timeout.
 - `--mai-max-retries <count>`: retry count for 429 and transient 5xx responses.
 
 When no locale is provided, the bridge omits the locale hint and lets MAI auto-detect speech languages. This is the default and is usually preferable for Chinese/English code-switching.
@@ -124,5 +124,6 @@ Voice Live options:
 - `--mai-live-model <model>`: Voice Live session model. Defaults to `gpt-4.1`.
 - `--mai-live-turn-detection none|server_vad|azure_semantic_vad|azure_semantic_vad_multilingual`: server-side turn detection. Defaults to `none` because PTT release is the local end-of-utterance signal.
 - `--mai-live-silence-duration-ms <ms>`: Voice Live silence duration when turn detection is enabled. Defaults to `500`.
+- `--mai-live-final-timeout <seconds>`: final transcription wait timeout after PTT release. Defaults to `15`.
 
 `voice-live` streams audio while recording, but `mai-transcribe-1.5` remains REST-only in this code path. If you select `--mai-transport voice-live`, also select `--mai-model mai-transcribe-1`.

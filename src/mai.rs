@@ -27,6 +27,7 @@ pub const DEFAULT_MAI_LIVE_API_VERSION: &str = "2026-04-10";
 pub const DEFAULT_MAI_LIVE_MODEL: &str = "gpt-4.1";
 pub const DEFAULT_MAI_LIVE_TURN_DETECTION: &str = "none";
 pub const DEFAULT_MAI_LIVE_SILENCE_DURATION_MS: u32 = 500;
+pub const DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS: f64 = 15.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaiTransport {
@@ -67,6 +68,7 @@ pub struct MaiOptions {
     pub live_model: String,
     pub live_turn_detection: String,
     pub live_silence_duration_ms: u32,
+    pub live_final_timeout_seconds: f64,
 }
 
 impl Default for MaiOptions {
@@ -86,6 +88,7 @@ impl Default for MaiOptions {
             live_model: DEFAULT_MAI_LIVE_MODEL.to_owned(),
             live_turn_detection: DEFAULT_MAI_LIVE_TURN_DETECTION.to_owned(),
             live_silence_duration_ms: DEFAULT_MAI_LIVE_SILENCE_DURATION_MS,
+            live_final_timeout_seconds: DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS,
         }
     }
 }
@@ -410,17 +413,19 @@ where
             CaptureEvent::Error(message) => bail!(message),
         }
     }
+    // Release the local microphone stream before waiting for remote final events.
+    drop(capture);
 
     if !state.got_final && !state.committed {
         send_voice_live_commit(&mut ws, &mut state, "capture-ended-without-final-chunk").await?;
     }
 
-    let deadline = Duration::from_secs_f64(options.timeout_seconds.max(1.0));
+    let deadline = Duration::from_secs_f64(options.live_final_timeout_seconds.max(1.0));
     let started = Instant::now();
     let mut last_wait_log = Instant::now();
     println!(
         "[MAI Voice Live] final wait started: timeout_seconds={:.1}, committed={}",
-        options.timeout_seconds.max(1.0),
+        options.live_final_timeout_seconds.max(1.0),
         state.committed
     );
     while !state.got_final && started.elapsed() < deadline {
@@ -1078,6 +1083,26 @@ mod tests {
             "zh,en"
         );
         assert_eq!(update["session"]["turn_detection"], Value::Null);
+    }
+
+    #[test]
+    fn voice_live_empty_completed_event_is_final() {
+        let mut state = VoiceLiveState::default();
+        let mut previews = Vec::new();
+
+        process_voice_live_event(
+            json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": ""
+            }),
+            &mut state,
+            &mut |text, is_final| previews.push((text.to_owned(), is_final)),
+        )
+        .unwrap();
+
+        assert!(state.got_final);
+        assert_eq!(state.final_text, "");
+        assert_eq!(previews, vec![("".to_owned(), true)]);
     }
 
     #[test]

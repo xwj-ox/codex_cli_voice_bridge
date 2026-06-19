@@ -7,9 +7,10 @@ use clap::{Parser, ValueEnum};
 use codex_cli_voice_bridge_rust::audio::{MicrophoneCaptureOptions, list_input_devices};
 use codex_cli_voice_bridge_rust::config::{default_mai_credentials_path, resolve_mai_credentials};
 use codex_cli_voice_bridge_rust::mai::{
-    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_MODEL,
-    DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION, DEFAULT_MAI_MODEL,
-    MaiOptions, MaiTransport, guess_audio_content_type, run_file_session, run_mic_session,
+    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS,
+    DEFAULT_MAI_LIVE_MODEL, DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION,
+    DEFAULT_MAI_MODEL, MaiOptions, MaiTransport, guess_audio_content_type, run_file_session,
+    run_mic_session,
 };
 
 const MIC_UPLOAD_SAMPLE_RATE: u32 = 16000;
@@ -138,6 +139,12 @@ struct Args {
     live_silence_duration_ms: u32,
     #[arg(
         long,
+        default_value_t = DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS,
+        help = "MAI Voice Live final result wait timeout in seconds after microphone capture ends"
+    )]
+    live_final_timeout: f64,
+    #[arg(
+        long,
         default_value = "",
         help = "Write the raw final JSON result to this path; empty disables file output"
     )]
@@ -227,6 +234,7 @@ async fn main() -> Result<()> {
         live_model: args.live_model.trim().to_owned(),
         live_turn_detection: args.live_turn_detection.trim().to_owned(),
         live_silence_duration_ms: args.live_silence_duration_ms,
+        live_final_timeout_seconds: args.live_final_timeout,
     };
 
     let result = match args.input_source {

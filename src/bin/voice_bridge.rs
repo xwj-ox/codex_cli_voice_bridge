@@ -14,9 +14,9 @@ use codex_cli_voice_bridge_rust::config::{
     resolve_mai_credentials,
 };
 use codex_cli_voice_bridge_rust::mai::{
-    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_MODEL,
-    DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION, DEFAULT_MAI_MODEL,
-    MaiOptions, MaiTransport,
+    DEFAULT_MAI_API_VERSION, DEFAULT_MAI_LIVE_API_VERSION, DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS,
+    DEFAULT_MAI_LIVE_MODEL, DEFAULT_MAI_LIVE_SILENCE_DURATION_MS, DEFAULT_MAI_LIVE_TURN_DETECTION,
+    DEFAULT_MAI_MODEL, MaiOptions, MaiTransport,
 };
 use codex_cli_voice_bridge_rust::platform::{PlatformInitOptions, create_platform_services};
 use codex_cli_voice_bridge_rust::preview::PreviewMode;
@@ -142,6 +142,12 @@ struct Args {
         help = "MAI Voice Live silence duration in milliseconds when turn detection is enabled"
     )]
     mai_live_silence_duration_ms: u32,
+    #[arg(
+        long,
+        default_value_t = DEFAULT_MAI_LIVE_FINAL_TIMEOUT_SECONDS,
+        help = "MAI Voice Live final result wait timeout in seconds after PTT release"
+    )]
+    mai_live_final_timeout: f64,
     #[arg(
         long,
         default_value_t = 16000,
@@ -428,6 +434,7 @@ fn build_mai_options(args: &Args, endpoint: String, key: String) -> Result<MaiOp
         live_model: args.mai_live_model.trim().to_owned(),
         live_turn_detection: args.mai_live_turn_detection.trim().to_owned(),
         live_silence_duration_ms: args.mai_live_silence_duration_ms,
+        live_final_timeout_seconds: args.mai_live_final_timeout,
     })
 }
 
